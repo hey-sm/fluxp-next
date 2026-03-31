@@ -1,0 +1,147 @@
+---
+title: 03.TS文件处理
+date: 2025-4-9
+author: ppppp
+category: vue
+excerpt: Vue 的响应式系统
+slug: vue-vs-react
+tags: [Vue, Vue响应式]
+---
+
+## TS 文件的基本处理
+
+我们书写的是 esm 模块化代码，别忘记最好生成`package.json`文件和`tsconfig.json`文件
+
+`package.json` 文件中需要配置`type:module`
+
+**reactive.ts**
+
+```typescript
+import { track, trigger } from './effect'
+
+export function reactive<T extends object>(target: T): T
+export function reactive(target: object) {
+  const proxy = new Proxy(target, {
+    get(target, key) {
+      // TODO: 收集依赖 哪个函数用到了哪个对象的哪个属性
+      track(target, key)
+      // 返回对象的相应属性值，推荐使用 Reflect.get
+      const result = Reflect.get(target, key)
+      return result
+    },
+    set(target, key, value) {
+      // TODO: 触发更新
+      trigger(target, key)
+      // 设置对象的相应属性值，推荐使用 Reflect.set
+      const result = Reflect.set(target, key, value)
+      return result
+    },
+  })
+
+  return proxy
+}
+```
+
+**effect.ts**
+
+```typescript
+export function track(target: object, key: unknown) {
+  logger.log(`依赖收集：${key}`)
+  console.log(`%c依赖收集：${key}`, 'color: #f40')
+}
+
+export function trigger(target: object, key: unknown) {
+  logger.log(`派发更新：${key}`)
+  console.log(`%c派发更新：${key}`, 'color: #0f0')
+}
+```
+
+**index.ts**
+
+```typescript
+import { reactive } from './reactive'
+
+const obj = {
+  a: 1,
+  b: 2,
+}
+const r = reactive(obj)
+console.log(r.a)
+r.a = 3
+```
+
+如果简单测试 ts 代码，可以直接使用 bun，
+
+```typescript
+bun run index.ts
+```
+
+如果只是在 nodejs 中运行，推荐下载使用[tsx](https://tsx.is/)，
+
+```typescript
+tsx index.ts
+```
+
+我说这个，只是推荐大家简单测试不要再使用`ts-node`会增加很多心智负担
+
+当然，我们也可以编译之后再运行
+
+**rollup 相关插件引入**
+
+```shell
+pnpm add rollup @rollup/plugin-node-resolve @rollup/plugin-commonjs tslib rollup-plugin-typescript2 @rollup/plugin-json @types/node rollup-plugin-clear @rollup/plugin-terser rollup-plugin-generate-html-template -D
+```
+
+**Rollup.config.mjs**
+
+```js
+import json from '@rollup/plugin-json'
+import { nodeResolve } from '@rollup/plugin-node-resolve'
+import commonjs from '@rollup/plugin-commonjs'
+import typescript from 'rollup-plugin-typescript2'
+import htmlTemplate from 'rollup-plugin-generate-html-template'
+import clear from 'rollup-plugin-clear'
+import terser from '@rollup/plugin-terser'
+
+export default {
+  input: 'index.ts',
+  output: {
+    file: 'dist/index.js',
+    format: 'esm',
+  },
+  treeshake: false, // 禁用摇树优化
+  onwarn: (msg, warn) => {
+    // 循环依赖警告 不提示
+    if (msg.code !== 'CIRCULAR_DEPENDENCY') {
+      warn(msg)
+    }
+  },
+  plugins: [
+    json(),
+    nodeResolve({
+      extensions: ['.js', 'jsx', 'ts', 'tsx'],
+    }),
+    commonjs(),
+    typescript(),
+    htmlTemplate({
+      template: 'public/index.html',
+      target: 'dist/index.html',
+      attrs: ['type="module"'],
+    }),
+    clear({
+      targets: ['dist'],
+    }),
+    // terser()
+  ],
+}
+```
+
+**package.json**
+
+```json
+"type": "module",
+"scripts": {
+  "start": "tsx ./index.ts",
+  "build": "rollup -c"
+},
+```

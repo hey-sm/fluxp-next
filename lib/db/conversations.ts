@@ -15,7 +15,9 @@ function notifyConversationsChanged() {
   window.dispatchEvent(new Event('conversations:changed'))
 }
 
-export async function createConversation(data: Pick<Conversation, 'id' | 'title' | 'providerId' | 'model'>): Promise<Conversation> {
+export async function createConversation(
+  data: Pick<Conversation, 'id' | 'title' | 'providerId' | 'model'>,
+): Promise<Conversation> {
   const db = await getDB()
   const now = Date.now()
   const conv: Conversation = { ...data, createdAt: now, updatedAt: now }
@@ -48,7 +50,7 @@ export async function deleteConversation(id: string) {
   await db.delete('conversations', id)
   const msgs = await db.getAllFromIndex('messages', 'by-conversationId', id)
   const tx = db.transaction('messages', 'readwrite')
-  await Promise.all(msgs.map(m => tx.store.delete(m.id)))
+  await Promise.all(msgs.map((m) => tx.store.delete(m.id)))
   await tx.done
   await deleteConversationMemory(id)
   notifyConversationsChanged()

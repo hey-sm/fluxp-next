@@ -63,11 +63,14 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
   }, [open, initial])
 
   function set(key: keyof ProviderFormData, value: string | boolean | string[]) {
-    setForm(prev => ({ ...prev, [key]: value }))
+    setForm((prev) => ({ ...prev, [key]: value }))
   }
 
   function buildPayload() {
-    const models = modelsInput.split(/[,\n]/).map(s => s.trim()).filter(Boolean)
+    const models = modelsInput
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
     const payload = { ...form, models, default_model: models[0] ?? '' }
     if (!payload.api_key) delete (payload as any).api_key
     return payload
@@ -89,7 +92,12 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
       const payload = buildPayload()
       const body: Record<string, unknown> = initial?.id
         ? { id: initial.id }
-        : { type: payload.type, base_url: payload.base_url, api_key: payload.api_key, models: payload.models }
+        : {
+            type: payload.type,
+            base_url: payload.base_url,
+            api_key: payload.api_key,
+            models: payload.models,
+          }
       const res = await fetch('/api/providers/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -109,7 +117,7 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{initial?.id ? '编辑服务商' : '新增服务商'}</DialogTitle>
@@ -117,12 +125,21 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-1.5">
             <Label>名称</Label>
-            <Input placeholder="如：Claude Pro" value={form.name} onChange={e => set('name', e.target.value)} />
+            <Input
+              placeholder="如：Claude Pro"
+              value={form.name}
+              onChange={(e) => set('name', e.target.value)}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>类型</Label>
-            <Select value={form.type} onValueChange={(v: string | null) => v && set('type', v as 'claude' | 'openai')}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+            <Select
+              value={form.type}
+              onValueChange={(v: string | null) => v && set('type', v as 'claude' | 'openai')}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="openai">OpenAI 兼容</SelectItem>
                 <SelectItem value="claude">Claude</SelectItem>
@@ -131,34 +148,44 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Base URL</Label>
-            <Input placeholder="https://api.example.com/v1" value={form.base_url} onChange={e => set('base_url', e.target.value)} />
+            <Input
+              placeholder="https://api.example.com/v1"
+              value={form.base_url}
+              onChange={(e) => set('base_url', e.target.value)}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>API Key <span className="text-muted-foreground text-xs">（编辑时留空则不修改）</span></Label>
-            <Input type="password" placeholder={initial?.id ? '不修改请留空' : 'sk-...'} value={form.api_key} onChange={e => set('api_key', e.target.value)} />
+            <Label>
+              API Key <span className="text-muted-foreground text-xs">（编辑时留空则不修改）</span>
+            </Label>
+            <Input
+              type="password"
+              placeholder={initial?.id ? '不修改请留空' : 'sk-...'}
+              value={form.api_key}
+              onChange={(e) => set('api_key', e.target.value)}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>模型列表 <span className="text-muted-foreground text-xs">（每行一个）</span></Label>
+            <Label>
+              模型列表 <span className="text-muted-foreground text-xs">（每行一个）</span>
+            </Label>
             <textarea
               placeholder={`claude-opus-4-6\nclaude-sonnet-4-5`}
               value={modelsInput}
-              onChange={e => setModelsInput(e.target.value)}
+              onChange={(e) => setModelsInput(e.target.value)}
               rows={4}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring resize-none font-mono"
+              className="bg-background focus:ring-ring w-full resize-none rounded-md border px-3 py-2 font-mono text-sm outline-none focus:ring-2"
             />
           </div>
         </div>
         <DialogFooter className="flex items-center justify-between sm:justify-between">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTest}
-            disabled={testing || saving}
-          >
-            <FlaskConical className={`w-4 h-4 mr-1 ${testing ? 'animate-pulse' : ''}`} />
+          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing || saving}>
+            <FlaskConical className={`mr-1 h-4 w-4 ${testing ? 'animate-pulse' : ''}`} />
             {testing ? '测试中...' : '测试连接'}
           </Button>
-          <Button onClick={handleSave} disabled={saving || testing}>{saving ? '保存中...' : '保存'}</Button>
+          <Button onClick={handleSave} disabled={saving || testing}>
+            {saving ? '保存中...' : '保存'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

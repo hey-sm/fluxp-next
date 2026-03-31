@@ -15,7 +15,10 @@ import { getConversation, updateConversation } from '@/lib/db/conversations'
 import { getMessages, addMessage } from '@/lib/db/messages'
 import { getConversationMemory, upsertConversationMemory } from '@/lib/db/conversation-memories'
 import { createId } from '@/lib/id'
-import { getSummaryCandidate, getMessagesAfterSummaryBoundary } from '@/lib/chat/conversation-memory'
+import {
+  getSummaryCandidate,
+  getMessagesAfterSummaryBoundary,
+} from '@/lib/chat/conversation-memory'
 import { createTextMessageParts, getMessageText } from '@/lib/message-content'
 import { takePendingMessage } from '@/lib/pending-message'
 
@@ -24,7 +27,7 @@ const PROGRAMMATIC_SCROLL_MS = 500
 
 export default function ChatDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { activeProviderId, activeModel, setActiveModel, setActiveProviderId } = useStore()
+  const { activeProviderId, setActiveModel, setActiveProviderId } = useStore()
   const [model, setModelState] = useState('')
   const [isNavigatorOpen, setIsNavigatorOpen] = useState(false)
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true)
@@ -151,7 +154,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
           throw new Error(await response.text())
         }
 
-        const data = await response.json() as { summary?: string }
+        const data = (await response.json()) as { summary?: string }
         if (!data.summary?.trim()) {
           return
         }
@@ -167,7 +170,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
       } finally {
         summaryInFlightRef.current = false
       }
-    }
+    },
   )
 
   const { messages, sendMessage, status, stop, setMessages } = useChat({
@@ -175,9 +178,15 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
     transport: new DefaultChatTransport({
       api: '/api/chat',
       body: () => ({ providerId: activeProviderIdRef.current, model: modelRef.current }),
-      prepareSendMessagesRequest: async ({ id: chatId, messages, body, trigger, messageId }) => {
+      prepareSendMessagesRequest: async ({
+        id: chatId,
+        messages: outgoingMessages,
+        body,
+        trigger,
+        messageId,
+      }) => {
         const memory = await getConversationMemory(id)
-        const nextMessages = getMessagesAfterSummaryBoundary(messages, memory)
+        const nextMessages = getMessagesAfterSummaryBoundary(outgoingMessages, memory)
 
         return {
           body: {
@@ -217,7 +226,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   async function persistAndSend(
     content: string,
     providerId = activeProviderIdRef.current,
-    nextModel = modelRef.current
+    nextModel = modelRef.current,
   ) {
     if (!providerId || !nextModel) {
       toast.error('请先选择服务商和模型')
@@ -249,7 +258,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   const sendPendingConversationMessage = useEffectEvent(
     async (content: string, providerId: string, nextModel: string) => {
       await persistAndSend(content, providerId, nextModel)
-    }
+    },
   )
 
   useEffect(() => {
@@ -268,11 +277,13 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
         modelRef.current = conversation.model
       }
 
-      setMessages(storedMessages.map((message) => ({
-        id: message.id,
-        role: message.role as 'user' | 'assistant',
-        parts: message.parts,
-      })))
+      setMessages(
+        storedMessages.map((message) => ({
+          id: message.id,
+          role: message.role as 'user' | 'assistant',
+          parts: message.parts,
+        })),
+      )
       syncToBottomSoon()
 
       if (conversation) {
@@ -284,7 +295,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
         await sendPendingConversationMessage(
           pendingMessage,
           conversation.providerId,
-          conversation.model
+          conversation.model,
         )
       }
     }
@@ -373,9 +384,8 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   const latestUserMessageId = userMessages[userMessages.length - 1]?.id
 
   const streamingMessage = isLoading ? messages[messages.length - 1] : undefined
-  const streaming = streamingMessage?.role === 'assistant'
-    ? getMessageText(streamingMessage)
-    : undefined
+  const streaming =
+    streamingMessage?.role === 'assistant' ? getMessageText(streamingMessage) : undefined
 
   const activeUserMessageIdRef = useRef(activeUserMessageId)
   activeUserMessageIdRef.current = activeUserMessageId
@@ -393,13 +403,13 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
     }
   }, [latestUserMessageId, userMessageLookup])
 
-  function registerUserMessage(id: string, node: HTMLDivElement | null) {
+  function registerUserMessage(messageId: string, node: HTMLDivElement | null) {
     if (node) {
-      userMessageRefs.current[id] = node
+      userMessageRefs.current[messageId] = node
       return
     }
 
-    delete userMessageRefs.current[id]
+    delete userMessageRefs.current[messageId]
   }
 
   function handleSelectUserMessage(messageId: string) {
@@ -419,9 +429,9 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-background">
-       <div className="p-4">
-          <ModelSelector model={model} onChange={setActiveModel} />
+    <div className="bg-background relative flex h-full min-h-0 flex-col">
+      <div className="p-4">
+        <ModelSelector model={model} onChange={handleModelChange} />
       </div>
       <div ref={scrollViewportRef} className="min-h-0 flex-1 overflow-y-auto">
         <MessageList

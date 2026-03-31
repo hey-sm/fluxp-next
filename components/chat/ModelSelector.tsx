@@ -5,7 +5,6 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ChevronDown } from 'lucide-react'
@@ -42,7 +41,10 @@ export function ModelSelector({ model, onChange }: Props) {
 
         const provider = data.find((item) => item.id === activeProviderId)
         const currentModel = modelRef.current
-        if (provider?.models?.length && (!currentModel || !provider.models.includes(currentModel))) {
+        if (
+          provider?.models?.length &&
+          (!currentModel || !provider.models.includes(currentModel))
+        ) {
           onChangeRef.current(provider.models[0])
         }
       })
@@ -53,14 +55,12 @@ export function ModelSelector({ model, onChange }: Props) {
   const label = model || '选择模型'
 
   if (!activeProviderId) {
-    return (
-      <span className="text-xs text-muted-foreground">请先选择服务商</span>
-    )
+    return <span className="text-muted-foreground text-xs">请先选择服务商</span>
   }
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-md  px-3 py-1.5 text-xs font-medium hover:bg-accent">
+      <DropdownMenuTrigger className="hover:bg-accent inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium">
         {label}
         <ChevronDown className="size-3" />
       </DropdownMenuTrigger>
@@ -76,7 +76,7 @@ export function ModelSelector({ model, onChange }: Props) {
             </DropdownMenuItem>
           ))}
           {models.length === 0 && (
-            <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+            <DropdownMenuItem disabled className="text-muted-foreground text-xs">
               暂无可用模型
             </DropdownMenuItem>
           )}

@@ -1,6 +1,6 @@
 'use client'
 
-import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react'
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { Streamdown } from 'streamdown'
 import { createCodePlugin } from '@streamdown/code'
 import { math } from '@streamdown/math'
@@ -55,7 +55,7 @@ function MarkdownContent({
         mermaid: false,
       }}
       lineNumbers={false}
-      className="text-[15px] leading-7 text-foreground"
+      className="text-foreground text-[15px] leading-7"
     >
       {content}
     </Streamdown>
@@ -82,7 +82,7 @@ export function MessageList({
     }
   }
 
-  function scheduleScrollToBottom() {
+  const scheduleScrollToBottom = useCallback(() => {
     cancelScheduledScroll()
 
     animationFrameRef.current = requestAnimationFrame(() => {
@@ -98,12 +98,12 @@ export function MessageList({
         viewport.scrollTop = viewport.scrollHeight
       })
     })
-  }
+  }, [onAutoScrollToBottom, scrollViewportRef])
 
   useLayoutEffect(() => {
     if (!stickToBottom) return
     scheduleScrollToBottom()
-  }, [messages.length, stickToBottom, streaming])
+  }, [messages.length, scheduleScrollToBottom, stickToBottom, streaming])
 
   useEffect(() => {
     if (!stickToBottom) {
@@ -136,7 +136,7 @@ export function MessageList({
       resizeObserver.disconnect()
       mutationObserver.disconnect()
     }
-  }, [scrollViewportRef, stickToBottom, messages.length, streaming])
+  }, [messages.length, scheduleScrollToBottom, scrollViewportRef, stickToBottom, streaming])
 
   useEffect(() => {
     return () => cancelScheduledScroll()
@@ -158,7 +158,7 @@ export function MessageList({
         root: scrollViewportRef?.current ?? null,
         threshold: [0.25, 0.5, 0.75],
         rootMargin: '-12% 0px -55% 0px',
-      }
+      },
     )
 
     userMessageNodesRef.current.forEach((node) => observer.observe(node))
@@ -183,35 +183,28 @@ export function MessageList({
       {messages.map((msg) => (
         <div
           key={msg.id}
-          className={cn(
-            'w-full',
-            msg.role === 'user' ? 'justify-end' : 'justify-start'
-          )}
+          className={cn('w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}
         >
           {msg.role === 'user' ? (
             <div className="flex justify-end">
               <div
                 ref={(node) => setUserMessageNode(msg.id, node)}
                 data-user-message-id={msg.id}
-                className="max-w-[min(38rem,78%)] whitespace-pre-wrap rounded-[28px] border border-border/60 bg-muted/70 px-5 py-3 text-[15px] leading-6 text-foreground shadow-[0_16px_40px_-30px_rgba(15,23,42,0.45)]"
+                className="border-border/60 bg-muted/70 text-foreground max-w-[min(38rem,78%)] rounded-[28px] border px-5 py-3 text-[15px] leading-6 whitespace-pre-wrap shadow-[0_16px_40px_-30px_rgba(15,23,42,0.45)]"
               >
                 {msg.content}
               </div>
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-[820px] text-[15px] leading-7 text-foreground">
+            <div className="text-foreground mx-auto w-full max-w-[820px] text-[15px] leading-7">
               <MarkdownContent content={msg.content} messageId={msg.id} />
             </div>
           )}
         </div>
       ))}
       {streaming !== undefined && (
-        <div className="mx-auto flex w-full max-w-[820px] justify-start text-[15px] leading-7 text-foreground">
-          <MarkdownContent
-            content={streaming}
-            messageId="streaming-assistant"
-            streaming
-          />
+        <div className="text-foreground mx-auto flex w-full max-w-[820px] justify-start text-[15px] leading-7">
+          <MarkdownContent content={streaming} messageId="streaming-assistant" streaming />
         </div>
       )}
     </div>

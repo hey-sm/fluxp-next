@@ -21,7 +21,7 @@
 
 ### 2. 服务商管理
 
-- 在 `/settings/providers` 中新增、编辑、删除服务商
+- 在聊天页侧边栏的设置 Sheet 中新增、编辑、删除服务商
 - 可配置：
   - 名称
   - 类型
@@ -35,7 +35,7 @@
 ### 3. 登录鉴权
 
 - 使用 Supabase Auth 邮箱密码登录
-- `/settings/*` 路由受保护，未登录会跳转到 `/login`
+- 登录和服务商管理都在聊天页侧边栏内完成
 
 ### 4. 博客系统
 
@@ -62,12 +62,10 @@ app/
     providers/           # 服务商 CRUD 与测试接口
   blog/                  # 博客列表与详情
   chat/                  # 对话首页与对话详情
-  login/                 # 登录页
-  settings/providers/    # 服务商管理页
 
 components/
   chat/                  # 聊天相关组件
-  settings/              # 设置页表单
+  settings/              # 服务商表单
   ui/                    # 通用 UI 组件
 
 content/blog/            # MDX 博客内容
@@ -142,8 +140,6 @@ pnpm exec eslint .
 - `/chat/[id]`：具体对话页
 - `/blog`：博客列表
 - `/blog/[slug]`：博客详情
-- `/login`：登录
-- `/settings/providers`：服务商设置
 
 ## 开发说明
 

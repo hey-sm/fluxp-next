@@ -30,15 +30,16 @@ export async function createProviderLanguageModel(providerId: string, model: str
     return null
   }
 
-  const languageModel = provider.type === 'claude'
-    ? createAnthropic({
-        apiKey: provider.api_key,
-        baseURL: provider.base_url || undefined,
-      })(model)
-    : createOpenAI({
-        apiKey: provider.api_key,
-        baseURL: provider.base_url || undefined,
-      })(model)
+  const languageModel =
+    provider.type === 'claude'
+      ? createAnthropic({
+          apiKey: provider.api_key,
+          baseURL: provider.base_url || undefined,
+        })(model)
+      : createOpenAI({
+          apiKey: provider.api_key,
+          baseURL: provider.base_url || undefined,
+        })(model)
 
   return { provider, languageModel }
 }

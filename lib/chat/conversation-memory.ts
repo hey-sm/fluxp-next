@@ -14,7 +14,7 @@ export type SummaryCandidate = {
 
 export function getSummaryCandidate(
   messages: Message[],
-  memory?: ConversationMemory
+  memory?: ConversationMemory,
 ): SummaryCandidate | null {
   if (messages.length < SUMMARY_TRIGGER_MESSAGE_COUNT) {
     return null
@@ -50,7 +50,7 @@ export function getSummaryCandidate(
 
 export function getMessagesAfterSummaryBoundary(
   messages: UIMessage[],
-  memory?: ConversationMemory
+  memory?: ConversationMemory,
 ): UIMessage[] {
   if (!memory?.coveredUntilMessageId) {
     return messages

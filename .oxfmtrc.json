@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "semi": false,
+  "printWidth": 100,
+  "trailingComma": "all",
+  "sortTailwindcss": {
+    "functions": ["cn", "cva", "clsx"]
+  },
+  "ignorePatterns": [
+    ".next/**",
+    "out/**",
+    "build/**",
+    "coverage/**",
+    "node_modules/**",
+    ".pnpm-store/**",
+    ".agents/**",
+    ".claude/**",
+    ".vscode/**",
+    ".idea/**",
+    "next-env.d.ts",
+    "*.tsbuildinfo"
+  ]
+}

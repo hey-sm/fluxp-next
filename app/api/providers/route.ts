@@ -8,9 +8,11 @@ async function getUser() {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
+    { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } },
   )
-  const { data: { user } } = await supabase.auth.getUser()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
   return user
 }
 
@@ -38,11 +40,7 @@ export async function POST(request: Request) {
 
   const body = await request.json()
   const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('providers')
-    .insert(body)
-    .select()
-    .single()
+  const { data, error } = await admin.from('providers').insert(body).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }

@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "plugins": ["eslint", "typescript", "oxc", "react", "jsx-a11y", "nextjs", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "settings": {
+    "react": {
+      "version": "19.2.4"
+    },
+    "jsx-a11y": {
+      "components": {
+        "Link": "a"
+      }
+    }
+  },
+  "ignorePatterns": [
+    ".next/**",
+    "out/**",
+    "build/**",
+    "coverage/**",
+    "node_modules/**",
+    ".pnpm-store/**",
+    ".agents/**",
+    ".claude/**",
+    ".vscode/**",
+    ".idea/**",
+    "next-env.d.ts",
+    "project-plan.md",
+    "skills-lock.json",
+    "*.tsbuildinfo"
+  ],
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "react/jsx-uses-react": "off",
+    "import/no-unassigned-import": "off"
+  },
+  "overrides": [
+    {
+      "files": ["components/ui/label.tsx"],
+      "rules": {
+        "jsx-a11y/label-has-associated-control": "off"
+      }
+    },
+    {
+      "files": ["components/chat/ProviderSettingsSheet.tsx"],
+      "rules": {
+        "jsx-a11y/prefer-tag-over-role": "off"
+      }
+    }
+  ]
+}

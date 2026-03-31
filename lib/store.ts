@@ -29,6 +29,9 @@ export const useStore = create<Store>()(
       setActiveModel: (model) => set({ activeModel: model }),
       setProviders: (providers) => set({ providers }),
     }),
-    { name: 'app-store', partialize: (s) => ({ activeProviderId: s.activeProviderId, activeModel: s.activeModel }) }
-  )
+    {
+      name: 'app-store',
+      partialize: (s) => ({ activeProviderId: s.activeProviderId, activeModel: s.activeModel }),
+    },
+  ),
 )

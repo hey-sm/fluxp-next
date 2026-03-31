@@ -18,8 +18,8 @@ export function getPostSlugs(): string[] {
   if (!fs.existsSync(BLOG_DIR)) return []
   return fs
     .readdirSync(BLOG_DIR)
-    .filter(f => f.endsWith('.mdx') || f.endsWith('.md'))
-    .map(f => f.replace(/\.mdx?$/, ''))
+    .filter((f) => f.endsWith('.mdx') || f.endsWith('.md'))
+    .map((f) => f.replace(/\.mdx?$/, ''))
 }
 
 export function getPost(slug: string): Post | null {
@@ -41,7 +41,7 @@ export function getPost(slug: string): Post | null {
 
 export function getAllPosts(): PostMeta[] {
   return getPostSlugs()
-    .map(slug => {
+    .map((slug) => {
       const post = getPost(slug)
       if (!post) return null
       const { content: _, ...meta } = post

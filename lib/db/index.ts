@@ -53,7 +53,9 @@ export function getDB() {
         }
 
         if (oldVersion < 2) {
-          const memoryStore = db.createObjectStore('conversationMemories', { keyPath: 'conversationId' })
+          const memoryStore = db.createObjectStore('conversationMemories', {
+            keyPath: 'conversationId',
+          })
           memoryStore.createIndex('by-updatedAt', 'updatedAt')
         }
       },

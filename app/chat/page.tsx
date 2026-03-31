@@ -26,20 +26,20 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="bg-background flex h-full min-h-0 flex-col">
       <div className="p-4">
-          <ModelSelector model={model} onChange={setActiveModel} />
+        <ModelSelector model={model} onChange={setActiveModel} />
       </div>
 
       <div className="flex flex-1 items-center justify-center px-5 py-10 sm:px-8 md:px-10 lg:px-14 xl:px-20">
         <div className="w-full max-w-[760px] text-center">
-          <p className="text-sm font-medium tracking-[0.2em] text-muted-foreground/80 uppercase">
+          <p className="text-muted-foreground/80 text-sm font-medium tracking-[0.2em] uppercase">
             Chat
           </p>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
             有什么可以帮你的？
           </h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
+          <p className="text-muted-foreground mt-3 text-sm leading-6 sm:text-base">
             {activeProviderId ? '选择模型后开始对话' : '请先在设置中选择服务商'}
           </p>
         </div>

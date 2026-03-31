@@ -25,9 +25,7 @@ function formatSummaryPrompt(existingSummary: string | undefined, messages: Summ
     .join('\n')
 
   return [
-    existingSummary?.trim()
-      ? `已有摘要：\n${existingSummary.trim()}`
-      : '已有摘要：\n无',
+    existingSummary?.trim() ? `已有摘要：\n${existingSummary.trim()}` : '已有摘要：\n无',
     '',
     '请基于下面这些新增对话更新摘要：',
     transcript,
@@ -35,7 +33,7 @@ function formatSummaryPrompt(existingSummary: string | undefined, messages: Summ
 }
 
 export async function POST(request: Request) {
-  const { providerId, model, existingSummary, messages } = await request.json() as {
+  const { providerId, model, existingSummary, messages } = (await request.json()) as {
     providerId?: string
     model?: string
     existingSummary?: string

@@ -20,10 +20,7 @@ export async function streamClaude({
     messages,
   })
   for await (const chunk of stream) {
-    if (
-      chunk.type === 'content_block_delta' &&
-      chunk.delta.type === 'text_delta'
-    ) {
+    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
       onChunk(chunk.delta.text)
     }
   }

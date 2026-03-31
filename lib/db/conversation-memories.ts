@@ -8,13 +8,15 @@ export type ConversationMemory = {
   updatedAt: number
 }
 
-export async function getConversationMemory(conversationId: string): Promise<ConversationMemory | undefined> {
+export async function getConversationMemory(
+  conversationId: string,
+): Promise<ConversationMemory | undefined> {
   const db = await getDB()
   return db.get('conversationMemories', conversationId)
 }
 
 export async function upsertConversationMemory(
-  memory: Omit<ConversationMemory, 'updatedAt'>
+  memory: Omit<ConversationMemory, 'updatedAt'>,
 ): Promise<ConversationMemory> {
   const db = await getDB()
   const nextMemory: ConversationMemory = {

@@ -25,10 +25,10 @@ export function UserMessageRail({ items, activeId, open, onOpenChange, onSelect 
   if (items.length === 0) return null
 
   return (
-    <div className="pointer-events-none fixed right-5 top-1/2 z-30 hidden -translate-y-1/2 md:block">
+    <div className="pointer-events-none fixed top-1/2 right-5 z-30 hidden -translate-y-1/2 md:block">
       <div className="pointer-events-auto flex items-center gap-3">
         {open && (
-          <div className="w-72 overflow-hidden rounded-[24px] border border-border/70 bg-background/96 p-2 shadow-[0_24px_70px_-36px_rgba(15,23,42,0.4)] backdrop-blur">
+          <div className="border-border/70 bg-background/96 w-72 overflow-hidden rounded-[24px] border p-2 shadow-[0_24px_70px_-36px_rgba(15,23,42,0.4)] backdrop-blur">
             <div className="max-h-[26rem] overflow-y-auto">
               {items.map((item) => (
                 <button
@@ -40,7 +40,9 @@ export function UserMessageRail({ items, activeId, open, onOpenChange, onSelect 
                   }}
                   className={cn(
                     'flex w-full items-start rounded-[20px] px-3 py-3 text-left transition-colors',
-                    item.id === activeId ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
+                    item.id === activeId
+                      ? 'bg-muted text-foreground'
+                      : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground',
                   )}
                 >
                   <span className="line-clamp-2 text-sm leading-5">{getPreview(item.content)}</span>
@@ -61,7 +63,7 @@ export function UserMessageRail({ items, activeId, open, onOpenChange, onSelect 
               key={item.id}
               className={cn(
                 'block h-[3px] rounded-full transition-all',
-                item.id === activeId ? 'w-7 bg-foreground' : 'w-7 bg-border'
+                item.id === activeId ? 'bg-foreground w-7' : 'bg-border w-7',
               )}
               aria-hidden="true"
               title={`第 ${index + 1} 条用户消息`}
