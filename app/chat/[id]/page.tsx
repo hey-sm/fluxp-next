@@ -32,6 +32,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   const [isNavigatorOpen, setIsNavigatorOpen] = useState(false)
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true)
   const [activeUserMessageId, setActiveUserMessageId] = useState<string>()
+  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(null)
   const scrollViewportRef = useRef<HTMLDivElement>(null)
   const userMessageRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const isPinnedToBottomRef = useRef(true)
@@ -236,19 +237,31 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
     activeProviderIdRef.current = providerId
     modelRef.current = nextModel
     scrollToBottom('auto')
+
     const userMessageId = createId({ prefix: 'msg' })
+    const createdAt = Date.now()
     const parts = createTextMessageParts(content)
 
-    await addMessage({
-      id: userMessageId,
-      conversationId: id,
-      role: 'user',
-      parts,
-      content,
-      createdAt: Date.now(),
-    })
-    await updateConversation(id, { providerId, model: nextModel })
     sendMessage({ id: userMessageId, role: 'user', parts })
+
+    void (async () => {
+      try {
+        await Promise.all([
+          addMessage({
+            id: userMessageId,
+            conversationId: id,
+            role: 'user',
+            parts,
+            content,
+            createdAt,
+          }),
+          updateConversation(id, { providerId, model: nextModel }),
+        ])
+      } catch (error) {
+        console.error('[chat] failed to persist user message:', error)
+        toast.error('消息已发送，但本地保存失败')
+      }
+    })()
   }
 
   const applyConversationModel = useEffectEvent((nextModel: string) => {
@@ -265,6 +278,9 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
     setIsPinnedToBottom(true)
 
     async function loadConversation() {
+      const pendingMessage = takePendingMessage(id)
+      setPendingFirstMessage(pendingMessage)
+
       const [conversation, storedMessages] = await Promise.all([
         getConversation(id),
         getMessages(id),
@@ -290,7 +306,6 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
         void refreshConversationMemory(conversation.providerId, conversation.model)
       }
 
-      const pendingMessage = takePendingMessage(id)
       if (pendingMessage && storedMessages.length === 0 && conversation) {
         await sendPendingConversationMessage(
           pendingMessage,
@@ -302,6 +317,16 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
 
     void loadConversation()
   }, [id, setActiveProviderId, setMessages])
+
+  useEffect(() => {
+    if (!pendingFirstMessage) {
+      return
+    }
+
+    if (messages.some((message) => message.role === 'user')) {
+      setPendingFirstMessage(null)
+    }
+  }, [messages, pendingFirstMessage])
 
   useEffect(() => {
     function handleScroll() {
@@ -371,14 +396,28 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
     await updateConversation(id, { providerId: activeProviderId, model: nextModel })
   }
 
-  const displayMessages = messages.map((message: UIMessage, index) => ({
-    id: message.id,
-    conversationId: id,
-    role: message.role as 'user' | 'assistant',
-    parts: message.parts,
-    content: getMessageText(message),
-    createdAt: index,
-  }))
+  const displayMessages = [
+    ...(pendingFirstMessage && messages.length === 0
+      ? [
+          {
+            id: `pending-first-message:${id}`,
+            conversationId: id,
+            role: 'user' as const,
+            parts: createTextMessageParts(pendingFirstMessage),
+            content: pendingFirstMessage,
+            createdAt: -1,
+          },
+        ]
+      : []),
+    ...messages.map((message: UIMessage, index) => ({
+      id: message.id,
+      conversationId: id,
+      role: message.role as 'user' | 'assistant',
+      parts: message.parts,
+      content: getMessageText(message),
+      createdAt: index,
+    })),
+  ]
   const userMessages = displayMessages.filter((message) => message.role === 'user')
   const userMessageLookup = `|${userMessages.map((message) => message.id).join('|')}|`
   const latestUserMessageId = userMessages[userMessages.length - 1]?.id

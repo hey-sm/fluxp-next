@@ -13,9 +13,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ProviderForm, type ProviderFormData } from '@/components/chat/ProviderForm'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client'
 import { useStore } from '@/lib/store'
-import { LogOut, Pencil, Plus, Trash2 } from 'lucide-react'
+import { LogOut, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { User } from '@supabase/supabase-js'
 
@@ -52,6 +52,10 @@ function getUserDisplayName(user: User | null) {
   return '用户'
 }
 
+function isAdminUser(user: User | null) {
+  return user?.app_metadata?.role === 'admin'
+}
+
 export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
   const [user, setUser] = useState<User | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
@@ -63,14 +67,38 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
   const [loginPassword, setLoginPassword] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
   const { activeProviderId, setActiveProviderId } = useStore()
+  const authAvailable = hasSupabaseBrowserEnv()
+  const isAdmin = isAdminUser(user)
 
-  const loadProviders = useCallback(async () => {
-    const res = await fetch('/api/providers?all=1')
-    setProviders(await res.json())
+  const loadProviders = useCallback(async (includeAll: boolean) => {
+    try {
+      const res = await fetch(includeAll ? '/api/providers?all=1' : '/api/providers')
+      const data = await res.json()
+      setProviders(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('[providers] load failed:', error)
+      setProviders([])
+    }
   }, [])
 
   useEffect(() => {
+    if (authAvailable) {
+      return
+    }
+
+    setUser(null)
+  }, [authAvailable])
+
+  useEffect(() => {
+    if (!open || !authAvailable) {
+      return
+    }
+
     const supabase = createClient()
+    if (!supabase) {
+      return
+    }
+
     supabase.auth.getUser().then(({ data }) => setUser(data.user))
 
     const {
@@ -80,18 +108,33 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
     })
 
     return () => subscription.unsubscribe()
-  }, [])
+  }, [authAvailable, open])
 
   useEffect(() => {
-    void loadProviders()
-  }, [loadProviders, user])
+    if (!open) {
+      return
+    }
+
+    void loadProviders(isAdmin)
+  }, [isAdmin, loadProviders, open])
 
   async function handleLogin(event: React.FormEvent) {
     event.preventDefault()
+
+    if (!authAvailable) {
+      toast.error('未配置 Supabase 登录环境变量')
+      return
+    }
+
+    const supabase = createClient()
+    if (!supabase) {
+      toast.error('未配置 Supabase 登录环境变量')
+      return
+    }
+
     setLoginLoading(true)
 
     try {
-      const supabase = createClient()
       const { error } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password: loginPassword,
@@ -102,11 +145,12 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
         return
       }
 
-      toast.success('登录成功')
-      setUser((await supabase.auth.getUser()).data.user)
+      const nextUser = (await supabase.auth.getUser()).data.user
+      setUser(nextUser)
       setLoginDialogOpen(false)
       setLoginPassword('')
-      void loadProviders()
+      toast.success(isAdminUser(nextUser) ? '登录成功' : '已登录，但当前账号没有管理权限')
+      void loadProviders(isAdminUser(nextUser))
     } finally {
       setLoginLoading(false)
     }
@@ -114,13 +158,23 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
 
   async function handleLogout() {
     const supabase = createClient()
+    if (!supabase) {
+      toast.error('未配置 Supabase 登录环境变量')
+      return
+    }
+
     await supabase.auth.signOut()
     setUser(null)
-    void loadProviders()
+    void loadProviders(false)
     toast.success('已退出登录')
   }
 
   async function handleSaveProvider(data: ProviderFormData, id?: string) {
+    if (!isAdmin) {
+      toast.error('当前账号没有管理权限')
+      return
+    }
+
     if (id) {
       await fetch(`/api/providers/${id}`, {
         method: 'PUT',
@@ -135,16 +189,21 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
       })
     }
 
-    void loadProviders()
+    void loadProviders(true)
   }
 
   async function handleDeleteProvider(id: string) {
+    if (!isAdmin) {
+      toast.error('当前账号没有管理权限')
+      return
+    }
+
     if (!confirm('确认删除此服务商？')) {
       return
     }
 
     await fetch(`/api/providers/${id}`, { method: 'DELETE' })
-    void loadProviders()
+    void loadProviders(true)
   }
 
   function handleProviderCardKeyDown(
@@ -174,9 +233,15 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
               <SheetTitle>API 服务商</SheetTitle>
               {user ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground max-w-36 truncate text-sm">
-                    {getUserDisplayName(user)}
-                  </span>
+                  <div className="flex min-w-0 flex-col items-end">
+                    <span className="text-muted-foreground max-w-44 truncate text-sm">
+                      {getUserDisplayName(user)}
+                    </span>
+                    <span className="text-muted-foreground inline-flex items-center gap-1 text-[11px]">
+                      <ShieldCheck className="size-3" />
+                      {isAdmin ? '管理员' : '只读账号'}
+                    </span>
+                  </div>
                   <button
                     className="hover:bg-muted rounded p-1"
                     title="退出登录"
@@ -185,12 +250,26 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
                     <LogOut className="text-muted-foreground size-3.5" />
                   </button>
                 </div>
-              ) : (
+              ) : authAvailable ? (
                 <Button size="sm" variant="outline" onClick={() => setLoginDialogOpen(true)}>
                   管理
                 </Button>
+              ) : (
+                <Button size="sm" variant="outline" disabled>
+                  管理不可用
+                </Button>
               )}
             </div>
+            {!authAvailable && (
+              <p className="text-muted-foreground mt-2 text-xs">
+                未配置 Supabase 前端环境变量，聊天可正常使用，管理登录暂不可用。
+              </p>
+            )}
+            {user && !isAdmin && (
+              <p className="text-muted-foreground mt-2 text-xs">
+                当前账号没有管理员权限，只能查看和选择已启用的服务商。
+              </p>
+            )}
           </SheetHeader>
 
           <div className="flex flex-1 flex-col overflow-hidden">
@@ -211,7 +290,7 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
                 ))}
               </div>
 
-              {user ? (
+              {isAdmin ? (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -250,7 +329,7 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
                         </span>
                       </div>
 
-                      {user ? (
+                      {isAdmin ? (
                         <div className="flex gap-2">
                           <button
                             className="hover:bg-muted rounded p-1"
@@ -279,7 +358,7 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
 
                 {visibleProviders.length === 0 ? (
                   <p className="text-muted-foreground py-8 text-center text-sm">
-                    {user ? '当前分类下暂无服务商，点击右上角新增' : '当前分类下暂无可用服务商'}
+                    {isAdmin ? '当前分类下暂无服务商，点击右上角新增' : '当前分类下暂无可用服务商'}
                   </p>
                 ) : null}
               </div>

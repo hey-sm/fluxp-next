@@ -1,28 +1,15 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { isAdminUser, getRequestUser } from '@/lib/server/admin-auth'
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 
-async function getUser() {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } },
-  )
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  return user
-}
-
 // POST /api/providers/test
 // Body: { id?: string } | { type, base_url, api_key, models }
 export async function POST(request: Request) {
-  const user = await getUser()
+  const user = await getRequestUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminUser(user)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const body = await request.json()
 
@@ -60,16 +47,16 @@ export async function POST(request: Request) {
       })
       const text = resp.content[0]?.type === 'text' ? resp.content[0].text : ''
       return NextResponse.json({ ok: true, reply: text })
-    } else {
-      const client = new OpenAI({ apiKey: api_key, baseURL: base_url || undefined })
-      const resp = await client.chat.completions.create({
-        model,
-        max_tokens: 16,
-        messages: [{ role: 'user', content: 'Hi' }],
-      })
-      const text = resp.choices[0]?.message?.content ?? ''
-      return NextResponse.json({ ok: true, reply: text })
     }
+
+    const client = new OpenAI({ apiKey: api_key, baseURL: base_url || undefined })
+    const resp = await client.chat.completions.create({
+      model,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+    const text = resp.choices[0]?.message?.content ?? ''
+    return NextResponse.json({ ok: true, reply: text })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: msg }, { status: 500 })

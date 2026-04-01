@@ -1,27 +1,15 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { isAdminUser, getRequestUser } from '@/lib/server/admin-auth'
 import { NextResponse } from 'next/server'
-
-async function getUser() {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } },
-  )
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  return user
-}
 
 type Params = { params: Promise<{ id: string }> }
 
 // PUT /api/providers/[id]
 export async function PUT(request: Request, { params }: Params) {
-  const user = await getUser()
+  const user = await getRequestUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminUser(user)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { id } = await params
   const body = await request.json()
   const admin = createAdminClient()
@@ -32,8 +20,10 @@ export async function PUT(request: Request, { params }: Params) {
 
 // DELETE /api/providers/[id]
 export async function DELETE(_: Request, { params }: Params) {
-  const user = await getUser()
+  const user = await getRequestUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminUser(user)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { id } = await params
   const admin = createAdminClient()
   const { error } = await admin.from('providers').delete().eq('id', id)
