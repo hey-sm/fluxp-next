@@ -1,38 +1,63 @@
 import Link from 'next/link'
-import { getAllPosts } from '@/lib/blog/mdx'
+import { ArrowRight } from 'lucide-react'
+import { BlogContentLayout } from '@/components/blog/BlogContentLayout'
 import { Badge } from '@/components/ui/badge'
+import { getBlogHomeData } from '@/lib/blog/mdx'
 
 export default function BlogPage() {
-  const posts = getAllPosts()
+  const { featuredDocs, sections } = getBlogHomeData()
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <h1 className="mb-8 text-3xl font-bold">Blog</h1>
-      {posts.length === 0 && <p className="text-muted-foreground">暂无文章。</p>}
-      <div className="flex flex-col gap-6">
-        {posts.map((post) => (
-          <Link
-            key={post.slug}
-            href={`/blog/${post.slug}`}
-            className="group hover:bg-muted/50 flex flex-col gap-1 rounded-lg border p-5 transition-colors"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold group-hover:underline">{post.title}</h2>
-              <span className="text-muted-foreground shrink-0 text-xs">{post.date}</span>
+    <BlogContentLayout>
+      <main className="mx-auto w-full max-w-3xl">
+        <section className="border-border bg-card rounded-[2rem] border px-6 py-10 shadow-sm md:px-10">
+          <p className="text-muted-foreground text-sm font-medium tracking-[0.18em] uppercase">
+            fluxp docs
+          </p>
+          <h1 className="mt-4 text-4xl font-semibold tracking-tight">只保留阅读最需要的东西</h1>
+          <p className="text-muted-foreground mt-4 max-w-2xl text-base leading-7">
+            左边是文档导航，右边是当前页面目录，中间只负责内容本身。这里会持续整理 Vue、React
+            和日常学习记录。
+          </p>
+          {featuredDocs.length > 0 && (
+            <div className="mt-8 flex flex-wrap gap-3">
+              {featuredDocs.slice(0, 3).map((doc) => (
+                <Link
+                  key={doc.href}
+                  href={doc.href}
+                  className="border-border hover:bg-muted/60 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors"
+                >
+                  <span>{doc.title}</span>
+                  <ArrowRight className="size-4" />
+                </Link>
+              ))}
             </div>
-            {post.excerpt && <p className="text-muted-foreground text-sm">{post.excerpt}</p>}
-            {post.tags && (
-              <div className="flex flex-wrap gap-1 pt-1">
-                {post.tags.map((t) => (
-                  <Badge key={t} variant="secondary">
-                    {t}
-                  </Badge>
+          )}
+        </section>
+
+        <section className="mt-10 grid gap-4 md:grid-cols-2">
+          {sections.map((section) => (
+            <div key={section.title} className="border-border rounded-3xl border p-5">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">{section.title}</h2>
+                <Badge variant="secondary">{section.count}</Badge>
+              </div>
+              <div className="mt-4 space-y-2">
+                {section.items.slice(0, 4).map((doc) => (
+                  <Link
+                    key={doc.href}
+                    href={doc.href}
+                    className="hover:bg-muted/60 flex items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors"
+                  >
+                    <span className="truncate">{doc.title}</span>
+                    <span className="text-muted-foreground shrink-0 pl-3">{doc.date}</span>
+                  </Link>
                 ))}
               </div>
-            )}
-          </Link>
-        ))}
-      </div>
-    </main>
+            </div>
+          ))}
+        </section>
+      </main>
+    </BlogContentLayout>
   )
 }

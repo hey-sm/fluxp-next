@@ -63,10 +63,14 @@ export function ChatSidebar() {
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <div className="group/header flex items-center justify-between px-2 py-1.5">
-            <div className="flex items-center gap-2 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => router.push('/')}
+              className="flex min-w-0 items-center gap-2 overflow-hidden text-left"
+            >
               <Image src="/favicon.svg" alt="logo" width={22} height={22} className="shrink-0" />
               {!collapsed && <span className="truncate text-sm font-semibold">fluxp</span>}
-            </div>
+            </button>
             <button
               onClick={toggleSidebar}
               className={`hover:bg-muted rounded p-1 transition-opacity ${
