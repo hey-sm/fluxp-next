@@ -3,13 +3,12 @@
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, FileText, FolderOpen } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FileText } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -30,7 +29,7 @@ const activeItemClassName =
   'bg-sidebar-accent/95 text-sidebar-foreground ring-sidebar-border/80 shadow-sm ring-1'
 
 const nestedToggleClassName =
-  'text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-left text-sm outline-hidden transition-colors group-data-[collapsible=icon]:hidden focus-visible:ring-2'
+  'text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground flex h-7 min-w-0 -translate-x-px items-center justify-between gap-2 overflow-hidden rounded-md px-2 text-left text-sm outline-hidden transition-colors group-data-[collapsible=icon]:hidden focus-visible:ring-2'
 
 function hasActiveDescendant(item: BlogNavItem, pathname: string): boolean {
   if (item.href === pathname) {
@@ -116,11 +115,10 @@ function NestedNavigation({
           onClick={() => onToggleGroup(item.href)}
           aria-expanded={isOpen}
         >
+          <span className="truncate">{item.title}</span>
           <ChevronRight
             className={cn('size-4 shrink-0 transition-transform', isOpen && 'rotate-90')}
           />
-          <FolderOpen className="size-4 shrink-0" />
-          <span className="truncate">{item.title}</span>
         </button>
         {isOpen && (
           <SidebarMenuSub>
@@ -147,12 +145,12 @@ function NestedNavigation({
         tooltip={item.title}
         onClick={() => onToggleGroup(item.href)}
         aria-expanded={isOpen}
+        className="justify-between"
       >
+        <span>{item.title}</span>
         <ChevronRight
           className={cn('size-4 shrink-0 transition-transform', isOpen && 'rotate-90')}
         />
-        <FolderOpen className="size-4 shrink-0" />
-        <span>{item.title}</span>
       </SidebarMenuButton>
       {isOpen && (
         <SidebarMenuSub>
@@ -239,7 +237,6 @@ export function BlogSidebar({ navigation }: BlogSidebarProps) {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Overview</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -258,7 +255,6 @@ export function BlogSidebar({ navigation }: BlogSidebarProps) {
 
         {navigation.length > 0 && (
           <SidebarGroup>
-            <SidebarGroupLabel>Documents</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {navigation.map((item) => (
@@ -279,4 +275,3 @@ export function BlogSidebar({ navigation }: BlogSidebarProps) {
     </Sidebar>
   )
 }
-

@@ -1,0 +1,84 @@
+.wrapper {
+  position: relative;
+  width: min(100%, 420px);
+  perspective: 500px;
+}
+
+.container {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 22px;
+  background: rgb(255 255 255 / 66.4%);
+  transition: transform 400ms;
+  transform: rotateX(15deg) rotateY(-20deg);
+  transform-style: preserve-3d;
+  backdrop-filter: blur(10px);
+}
+
+.shadow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 20px;
+  filter: blur(30px);
+  background-color: #999cff;
+  background-image:
+    radial-gradient(at 85% 51%, hsl(60deg 60% 61%) 0px, transparent 50%),
+    radial-gradient(at 74% 68%, hsl(235deg 69% 77%) 0px, transparent 50%),
+    radial-gradient(at 64% 79%, hsl(284deg 72% 73%) 0px, transparent 50%),
+    radial-gradient(at 75% 16%, hsl(283deg 60% 72%) 0px, transparent 50%),
+    radial-gradient(at 90% 65%, hsl(153deg 70% 64%) 0px, transparent 50%),
+    radial-gradient(at 91% 83%, hsl(283deg 74% 69%) 0px, transparent 50%),
+    radial-gradient(at 72% 91%, hsl(213deg 75% 75%) 0px, transparent 50%);
+}
+
+.input {
+  position: relative;
+  width: 100%;
+  border: none;
+  outline: none;
+  border-radius: 20px;
+  padding: 12px 10px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 1.08rem;
+  line-height: 1.2;
+  text-align: center;
+  pointer-events: none;
+}
+
+.input::placeholder {
+  color: var(--foreground);
+  opacity: 1;
+}
+
+.input:disabled {
+  cursor: default;
+  opacity: 1;
+  -webkit-text-fill-color: var(--foreground);
+}
+
+:global(.dark) .container {
+  background: rgb(23 23 23 / 72%);
+}
+
+:global(.dark) .input::placeholder,
+:global(.dark) .input:disabled {
+  color: rgb(245 245 245 / 92%);
+  -webkit-text-fill-color: rgb(245 245 245 / 92%);
+}
+
+@media (width <= 640px) {
+  .wrapper {
+    width: min(100%, 360px);
+  }
+
+  .container {
+    transform: rotateX(10deg) rotateY(-14deg);
+  }
+}

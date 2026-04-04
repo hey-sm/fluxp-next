@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/lib/store'
 import { ModelSelector } from '@/components/chat/ModelSelector'
+import { ChatWelcomeCard } from '@/components/chat/ChatWelcomeCard'
 import { MessageInput } from '@/components/chat/MessageInput'
 import { createConversation } from '@/lib/db/conversations'
 import { createId } from '@/lib/id'
@@ -13,16 +14,27 @@ export default function ChatPage() {
   const { activeProviderId, activeModel, setActiveModel } = useStore()
   const model = activeModel
 
-  async function handleSend(content: string) {
+  function handleSend(content: string) {
     if (!activeProviderId || !model) return
-    const conv = await createConversation({
-      id: createId({ prefix: 'conv' }),
-      title: content.slice(0, 40),
+
+    const conversationId = createId({ prefix: 'conv' })
+    const title = content.slice(0, 40)
+
+    setPendingMessage(conversationId, {
+      content,
+      title,
       providerId: activeProviderId,
       model,
     })
-    setPendingMessage(conv.id, content)
-    router.push(`/chat/${conv.id}`)
+
+    router.push(`/chat/${conversationId}`)
+
+    void createConversation({
+      id: conversationId,
+      title,
+      providerId: activeProviderId,
+      model,
+    })
   }
 
   return (
@@ -32,17 +44,7 @@ export default function ChatPage() {
       </div>
 
       <div className="flex flex-1 items-center justify-center px-5 py-10 sm:px-8 md:px-10 lg:px-14 xl:px-20">
-        <div className="w-full max-w-[760px] text-center">
-          <p className="text-muted-foreground/80 text-sm font-medium tracking-[0.2em] uppercase">
-            Chat
-          </p>
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
-            有什么可以帮你的？
-          </h1>
-          <p className="text-muted-foreground mt-3 text-sm leading-6 sm:text-base">
-            {activeProviderId ? '选择模型后开始对话' : '请先在设置中选择服务商'}
-          </p>
-        </div>
+        <ChatWelcomeCard />
       </div>
 
       <MessageInput onSend={handleSend} disabled={!activeProviderId || !model} />

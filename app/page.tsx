@@ -1,47 +1,45 @@
-import Link from 'next/link'
+import { HomeTopNav } from '@/components/home/home-top-nav'
+import { HomeWeatherStatus } from '@/components/home/home-weather-status'
+import { HomeRetroTv } from '@/components/home/home-retro-tv'
+import { LightRays } from '@/components/ui/light-rays'
+import { PixelHeading } from '@/components/ui/pixel-heading-character'
+import { fetchWeatherFromIp } from '@/lib/weather'
 
-export default function Home() {
+export default async function Home() {
+  const initialWeather = await fetchWeatherFromIp().catch(() => null)
+
   return (
-    <div className="flex min-h-screen flex-col">
-      {/* Nav */}
-      <header className="border-b">
-        <nav className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
-          <span className="text-lg font-bold">My App</span>
-          <div className="flex gap-6 text-sm">
-            <Link
-              href="/chat"
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Chat
-            </Link>
-            <Link
-              href="/blog"
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Blog
-            </Link>
-          </div>
-        </nav>
-      </header>
+    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8ff_42%,#f8fbff_100%)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.98),rgba(241,247,255,0.82)_34%,rgba(240,247,255,0.34)_58%,transparent_76%)]" />
+      <LightRays
+        className="absolute inset-0"
+        color="rgba(132, 188, 255, 0.24)"
+        blur={42}
+        opacity={0.72}
+        speed={15}
+        length="76vh"
+      />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.56),transparent_42%)]" />
 
-      {/* Hero */}
-      <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-        <h1 className="text-5xl font-bold tracking-tight">Welcome</h1>
-        <p className="text-muted-foreground max-w-md text-lg">AI 对话 · 博客 · 一站式平台</p>
-        <div className="flex gap-4">
-          <Link
-            href="/chat"
-            className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-10 items-center rounded-md px-6 text-sm font-medium transition-colors"
+      <HomeTopNav />
+
+      <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 pb-20 sm:px-8">
+        <section className="flex flex-col items-center pt-20 text-center sm:pt-28">
+          <PixelHeading
+            autoPlay
+            mode="multi"
+            cycleInterval={350}
+            staggerDelay={20}
+            className="text-[clamp(3rem,8vw,6rem)] leading-none tracking-[-0.06em] text-slate-900"
           >
-            开始对话
-          </Link>
-          <Link
-            href="/blog"
-            className="hover:bg-muted inline-flex h-10 items-center rounded-md border px-6 text-sm font-medium transition-colors"
-          >
-            阅读博客
-          </Link>
-        </div>
+            Welcome to fluxp
+          </PixelHeading>
+          <HomeWeatherStatus className="mt-5" initialWeather={initialWeather} />
+        </section>
+
+        <section className="mt-auto flex justify-center pt-16 pb-6 sm:pt-20">
+          <HomeRetroTv />
+        </section>
       </main>
     </div>
   )

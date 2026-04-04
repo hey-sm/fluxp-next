@@ -6,6 +6,7 @@ import { createCodePlugin } from '@streamdown/code'
 import { math } from '@streamdown/math'
 import { cn } from '@/lib/utils'
 import type { Message } from '@/lib/db/messages'
+import { ChatThinkingLoader } from '@/components/chat/ChatThinkingLoader'
 import 'katex/dist/katex.min.css'
 
 type Props = {
@@ -27,6 +28,10 @@ const STREAMDOWN_PLUGINS = {
   math,
 } as const
 
+function AssistantLoading() {
+  return <ChatThinkingLoader />
+}
+
 function MarkdownContent({
   content,
   messageId,
@@ -37,7 +42,7 @@ function MarkdownContent({
   streaming?: boolean
 }) {
   if (!content) {
-    return streaming ? <span className="animate-pulse">▍</span> : null
+    return streaming ? <AssistantLoading /> : null
   }
 
   return (

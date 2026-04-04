@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { use, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { toast } from 'sonner'
@@ -11,36 +11,55 @@ import { MessageList } from '@/components/chat/MessageList'
 import { MessageInput } from '@/components/chat/MessageInput'
 import { UserMessageRail } from '@/components/chat/UserMessageRail'
 import { Button } from '@/components/ui/button'
-import { getConversation, updateConversation } from '@/lib/db/conversations'
+import { createConversation, getConversation, updateConversation } from '@/lib/db/conversations'
 import { getMessages, addMessage } from '@/lib/db/messages'
 import { getConversationMemory, upsertConversationMemory } from '@/lib/db/conversation-memories'
 import { createId } from '@/lib/id'
+import {
+  clearPendingMessage,
+  getPendingMessage,
+  type PendingConversationMessage,
+} from '@/lib/pending-message'
 import {
   getSummaryCandidate,
   getMessagesAfterSummaryBoundary,
 } from '@/lib/chat/conversation-memory'
 import { createTextMessageParts, getMessageText } from '@/lib/message-content'
-import { takePendingMessage } from '@/lib/pending-message'
 
 const BOTTOM_OFFSET_PX = 80
 const PROGRAMMATIC_SCROLL_MS = 500
 
+function formatRequestErrorMessage(error: Error) {
+  const message = error.message.trim()
+  return message ? `请求失败：${message}` : '请求失败，请稍后重试。'
+}
+
 export default function ChatDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { activeProviderId, setActiveModel, setActiveProviderId } = useStore()
-  const [model, setModelState] = useState('')
+  const { activeProviderId, activeModel, setActiveModel, setActiveProviderId } = useStore()
+  const [model, setModelState] = useState(activeModel)
   const [isNavigatorOpen, setIsNavigatorOpen] = useState(false)
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true)
   const [activeUserMessageId, setActiveUserMessageId] = useState<string>()
-  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(null)
+  const [pendingPreviewMessage, setPendingPreviewMessage] =
+    useState<PendingConversationMessage | null>(null)
+  const [isPendingBootstrapped, setIsPendingBootstrapped] = useState(false)
   const scrollViewportRef = useRef<HTMLDivElement>(null)
   const userMessageRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const isPinnedToBottomRef = useRef(true)
   const scrollIntentRef = useRef<'bottom' | 'message' | null>(null)
   const scrollIntentTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const summaryInFlightRef = useRef(false)
+  const initialPendingMessageRef = useRef<PendingConversationMessage | null>(null)
 
   isPinnedToBottomRef.current = isPinnedToBottom
+
+  useLayoutEffect(() => {
+    const nextPendingMessage = getPendingMessage(id)
+    initialPendingMessageRef.current = nextPendingMessage
+    setPendingPreviewMessage(nextPendingMessage)
+    setIsPendingBootstrapped(true)
+  }, [id])
 
   function setModel(nextModel: string) {
     setModelState(nextModel)
@@ -218,7 +237,18 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
       void refreshConversationMemory(activeProviderIdRef.current, modelRef.current)
     },
     onError: (error) => {
-      toast.error(`请求失败: ${error.message}`)
+      const nextErrorMessage = formatRequestErrorMessage(error)
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: createId({ prefix: 'msg' }),
+          role: 'assistant',
+          parts: createTextMessageParts(nextErrorMessage),
+        },
+      ])
+
+      toast.error(nextErrorMessage)
     },
   })
 
@@ -275,16 +305,49 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   )
 
   useEffect(() => {
+    if (!isPendingBootstrapped) {
+      return
+    }
+
     setIsPinnedToBottom(true)
 
     async function loadConversation() {
-      const pendingMessage = takePendingMessage(id)
-      setPendingFirstMessage(pendingMessage)
+      const pendingMessage = initialPendingMessageRef.current
+
+      if (pendingMessage?.providerId) {
+        setActiveProviderId(pendingMessage.providerId)
+        activeProviderIdRef.current = pendingMessage.providerId
+      }
+
+      if (pendingMessage?.model) {
+        applyConversationModel(pendingMessage.model)
+        modelRef.current = pendingMessage.model
+      }
 
       const [conversation, storedMessages] = await Promise.all([
         getConversation(id),
         getMessages(id),
       ])
+
+      const effectiveConversation =
+        conversation ??
+        (pendingMessage
+          ? {
+              id,
+              title: pendingMessage.title,
+              providerId: pendingMessage.providerId,
+              model: pendingMessage.model,
+            }
+          : null)
+
+      if (!conversation && pendingMessage?.providerId && pendingMessage.model) {
+        void createConversation({
+          id,
+          title: pendingMessage.title,
+          providerId: pendingMessage.providerId,
+          model: pendingMessage.model,
+        })
+      }
 
       if (conversation) {
         setActiveProviderId(conversation.providerId)
@@ -293,40 +356,53 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
         modelRef.current = conversation.model
       }
 
-      setMessages(
-        storedMessages.map((message) => ({
-          id: message.id,
-          role: message.role as 'user' | 'assistant',
-          parts: message.parts,
-        })),
+      const nextStoredMessages = storedMessages.map((message) => ({
+        id: message.id,
+        role: message.role as 'user' | 'assistant',
+        parts: message.parts,
+      }))
+      const pendingContent = pendingMessage?.content ?? null
+      const shouldSendPendingMessage = Boolean(
+        pendingContent && storedMessages.length === 0 && effectiveConversation,
       )
+
+      setMessages(shouldSendPendingMessage ? [] : nextStoredMessages)
       syncToBottomSoon()
 
-      if (conversation) {
-        void refreshConversationMemory(conversation.providerId, conversation.model)
+      if (effectiveConversation) {
+        void refreshConversationMemory(
+          effectiveConversation.providerId,
+          effectiveConversation.model,
+        )
       }
 
-      if (pendingMessage && storedMessages.length === 0 && conversation) {
+      if (pendingContent && shouldSendPendingMessage && effectiveConversation) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve())
+        })
+
         await sendPendingConversationMessage(
-          pendingMessage,
-          conversation.providerId,
-          conversation.model,
+          pendingContent,
+          effectiveConversation.providerId,
+          effectiveConversation.model,
         )
+        clearPendingMessage(id)
       }
     }
 
     void loadConversation()
-  }, [id, setActiveProviderId, setMessages])
+  }, [id, isPendingBootstrapped, setActiveProviderId, setMessages])
 
   useEffect(() => {
-    if (!pendingFirstMessage) {
+    if (!pendingPreviewMessage?.content) {
       return
     }
 
     if (messages.some((message) => message.role === 'user')) {
-      setPendingFirstMessage(null)
+      setPendingPreviewMessage(null)
+      clearPendingMessage(id)
     }
-  }, [messages, pendingFirstMessage])
+  }, [id, messages, pendingPreviewMessage])
 
   useEffect(() => {
     function handleScroll() {
@@ -397,14 +473,14 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   const displayMessages = [
-    ...(pendingFirstMessage && messages.length === 0
+    ...(pendingPreviewMessage?.content && messages.length === 0
       ? [
           {
             id: `pending-first-message:${id}`,
             conversationId: id,
             role: 'user' as const,
-            parts: createTextMessageParts(pendingFirstMessage),
-            content: pendingFirstMessage,
+            parts: createTextMessageParts(pendingPreviewMessage.content),
+            content: pendingPreviewMessage.content,
             createdAt: -1,
           },
         ]
@@ -424,7 +500,15 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
 
   const streamingMessage = isLoading ? messages[messages.length - 1] : undefined
   const streaming =
-    streamingMessage?.role === 'assistant' ? getMessageText(streamingMessage) : undefined
+    streamingMessage?.role === 'assistant'
+      ? getMessageText(streamingMessage)
+      : isLoading
+        ? ''
+        : undefined
+  const visibleMessages =
+    isLoading && streamingMessage?.role === 'assistant'
+      ? displayMessages.slice(0, -1)
+      : displayMessages
 
   const activeUserMessageIdRef = useRef(activeUserMessageId)
   activeUserMessageIdRef.current = activeUserMessageId
@@ -474,7 +558,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
       </div>
       <div ref={scrollViewportRef} className="min-h-0 flex-1 overflow-y-auto">
         <MessageList
-          messages={isLoading ? displayMessages.slice(0, -1) : displayMessages}
+          messages={visibleMessages}
           streaming={isLoading ? streaming : undefined}
           stickToBottom={isPinnedToBottom}
           scrollViewportRef={scrollViewportRef}

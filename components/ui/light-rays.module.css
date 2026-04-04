@@ -1,0 +1,72 @@
+.wrapper {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.glow {
+  position: absolute;
+  top: -18%;
+  left: 50%;
+  width: min(90vw, 72rem);
+  height: 22rem;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: radial-gradient(
+    circle at center,
+    rgb(255 255 255 / 0.96) 0%,
+    rgb(208 232 255 / 0.55) 35%,
+    transparent 72%
+  );
+  filter: blur(30px);
+  opacity: 0.95;
+}
+
+.ray {
+  position: absolute;
+  top: -4rem;
+  left: var(--ray-left);
+  width: var(--ray-width);
+  height: var(--light-rays-length);
+  transform: translateX(-50%) rotate(var(--ray-rotate));
+  transform-origin: top center;
+  opacity: 0;
+  filter: blur(var(--light-rays-blur));
+  animation: light-rays-drift var(--ray-duration) ease-in-out infinite;
+  animation-delay: var(--ray-delay);
+}
+
+.ray::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  background: linear-gradient(
+    180deg,
+    var(--light-rays-color) 0%,
+    rgb(255 255 255 / 0.18) 24%,
+    rgb(255 255 255 / 0.04) 56%,
+    transparent 84%
+  );
+}
+
+@keyframes light-rays-drift {
+  0%,
+  100% {
+    opacity: 0.12;
+    transform: translateX(-50%) rotate(calc(var(--ray-rotate) - 1.5deg)) translateY(0);
+  }
+
+  50% {
+    opacity: var(--light-rays-opacity);
+    transform: translateX(-50%) rotate(calc(var(--ray-rotate) + 1.5deg)) translateY(1rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ray {
+    animation: none;
+    opacity: 0.26;
+  }
+}
