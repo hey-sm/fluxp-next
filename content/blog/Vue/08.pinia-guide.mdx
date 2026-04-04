@@ -1,0 +1,283 @@
+---
+title: Pinia
+category: vue
+excerpt: 从何时引入 Pinia、store 边界设计到 state、getters、actions 与项目组织，系统讲清 Vue 3 客户端状态管理的主线。
+slug: pinia-state-management-system
+tags: [Pinia, Vue 3, State Management, Store]
+---
+
+{/* @format */}
+
+# Pinia 状态管理体系
+
+Vue 3 本身已经提供了 `ref`、`reactive`、`provide/inject` 等能力，因此很多项目在初期并不需要额外状态库。真正让 Pinia 变得必要的，通常不是“状态多了”，而是**状态开始跨页面、跨区域、跨组件层级扩散，并且读写路径越来越分散**。
+
+Pinia 在现代 Vue 生态中的定位非常明确：它是 Vue 官方推荐的状态管理库，用来组织应用级客户端状态。它不是为了取代所有局部状态，而是为“共享状态如何稳定组织”提供一套统一模型。
+
+来源：[Pinia Core Concepts](https://pinia.vuejs.org/core-concepts/)
+
+## 什么时候该引入 Pinia
+
+可以先用一个简单判断：
+
+- 组件局部状态：继续使用 `ref` / `reactive`
+- 同一棵局部树共享值：先考虑 `provide/inject`
+- 跨页面、跨区域、跨模块共享：考虑 Pinia
+
+典型适用场景包括：
+
+- 用户会话信息
+- 全局筛选条件
+- 主题 / 偏好设置
+- 多页面共享的客户端缓存
+- 复杂业务流程中的统一状态中心
+
+如果一个状态只在单组件里使用，把它提前塞进 Pinia，通常只会增加心智负担。
+
+## Pinia store 的基本结构
+
+Pinia 官方文档把 store 的核心能力归纳得很清晰：
+
+- `state`
+- `getters`
+- `actions`
+
+可以把它理解为：
+
+- `state`：原始状态
+- `getters`：基于状态的派生值
+- `actions`：对状态的修改和业务动作封装
+
+这套结构和组件里的 `ref` / `computed` / methods` 很接近，但把组织边界从“单个组件”提升到了“应用级状态单元”。
+
+## defineStore：store 的创建入口
+
+一句话定义：`defineStore()` 用来定义一个具名 store。
+
+它解决什么问题：把一组共享状态和与之相关的读取、更新逻辑收拢到同一个模块中。
+
+Pinia 支持两种主要写法：
+
+- Option Store
+- Setup Store
+
+## Option Store
+
+Option Store 更接近传统配置对象，适合快速上手。
+
+```ts
+import { defineStore } from 'pinia'
+
+export const useCounterStore = defineStore('counter', {
+  state: () => ({
+    count: 0,
+  }),
+  getters: {
+    doubleCount: (state) => state.count * 2,
+  },
+  actions: {
+    increment() {
+      this.count++
+    },
+  },
+})
+```
+
+它的优点是结构直观，适合简单 store 或团队统一风格。
+
+## Setup Store
+
+Setup Store 更贴近 Composition API，也是现代 Vue 3 项目里很常见的选择。
+
+```ts
+import { computed, ref } from 'vue'
+import { defineStore } from 'pinia'
+
+export const useCounterStore = defineStore('counter', () => {
+  const count = ref(0)
+  const doubleCount = computed(() => count.value * 2)
+
+  function increment() {
+    count.value++
+  }
+
+  return { count, doubleCount, increment }
+})
+```
+
+Pinia 官方文档明确指出，在 Setup Store 中：
+
+- `ref()` 会变成 state
+- `computed()` 会变成 getters
+- `function()` 会变成 actions
+
+同时要特别注意：**需要作为状态暴露的值必须 return 出来**，否则 Pinia 无法把它识别为 store 状态。来源：[Defining a Store](https://pinia.vuejs.org/core-concepts/)
+
+## state：原始状态应该怎么设计
+
+状态设计的关键不在于“字段写全”，而在于边界清晰。
+
+更稳定的设计原则通常是：
+
+- 一个 store 代表一个明确业务域
+- state 只保存“原始状态”
+- 派生结果不要重复存一份
+
+例如一个筛选 store 可以这样设计：
+
+```ts
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+
+export const useFilterStore = defineStore('filters', () => {
+  const keyword = ref('')
+  const status = ref<'all' | 'open' | 'closed'>('all')
+  const page = ref(1)
+
+  return { keyword, status, page }
+})
+```
+
+如果你把所有派生值、临时值和可计算结果都直接存进 state，后续维护成本会急剧上升。
+
+## getters：派生状态，不是第二份 state
+
+Pinia 官方文档明确说明，getters 本质上等价于 store 的 `computed` 值。
+
+```ts
+export const useTodoStore = defineStore('todos', {
+  state: () => ({
+    todos: [
+      { id: 1, done: false },
+      { id: 2, done: true },
+    ],
+  }),
+  getters: {
+    completedCount: (state) => state.todos.filter((todo) => todo.done).length,
+  },
+})
+```
+
+这意味着 getters 最适合：
+
+- 统计值
+- 派生列表
+- 布尔判断
+
+常见注意点：如果 getter 需要返回函数来接收参数，它本质上就不再是同样意义上的缓存 getter，而更接近一个带状态上下文的查询函数。来源：[Getters](https://pinia.vuejs.org/core-concepts/getters.html)
+
+## actions：更新状态和业务动作的统一入口
+
+Pinia 的 `actions` 用来承载状态变更和相关业务逻辑。
+
+```ts
+export const useCartStore = defineStore('cart', {
+  state: () => ({
+    items: [] as { id: number; quantity: number }[],
+  }),
+  actions: {
+    addItem(id: number) {
+      const existing = this.items.find((item) => item.id === id)
+      if (existing) {
+        existing.quantity += 1
+      } else {
+        this.items.push({ id, quantity: 1 })
+      }
+    },
+  },
+})
+```
+
+更稳定的实践通常是：
+
+- 组件负责触发动作
+- store 负责组织状态更新
+
+而不是把大量修改细节散落在各个组件里。
+
+## 组件里怎么读取 Pinia
+
+在组件中使用 Pinia store 时，最核心的两种方式是：
+
+- 直接访问 store
+- 用 `storeToRefs()` 把响应式 state / getters 解构出来
+
+```vue
+<script setup lang="ts">
+import { storeToRefs } from 'pinia'
+import { useCounterStore } from '@/stores/counter'
+
+const counterStore = useCounterStore()
+const { count, doubleCount } = storeToRefs(counterStore)
+
+function increment() {
+  counterStore.increment()
+}
+</script>
+```
+
+为什么这里要用 `storeToRefs`？因为普通解构会丢失响应式连接，而 `storeToRefs` 能安全地把 store 里的响应式字段转换成可解构的 refs。来源：[Core Concepts](https://pinia.vuejs.org/core-concepts/)
+
+## store 应该怎么拆
+
+Pinia 官方文档明确提到：可以定义任意多个 store，并且通常应该每个 store 单独放在一个文件里。
+
+这背后的工程含义非常重要：
+
+- 不要先做一个巨大的全局 store
+- 应按业务域拆 store
+- 每个 store 只维护一类明确状态
+
+例如：
+
+- `authStore`
+- `filterStore`
+- `cartStore`
+- `uiPreferenceStore`
+
+如果一个 store 同时维护认证、筛选、购物车和弹窗开关，它很快就会失去边界。
+
+## Pinia 与 provide/inject 的边界
+
+这是很多 Vue 项目一开始最容易摇摆的地方。
+
+可以用一句话判断：
+
+- `provide/inject`：局部树上下文
+- Pinia：应用级共享状态
+
+如果状态只在某个表单树或某个组件库容器内部共享，`provide/inject` 往往已经够用。  
+如果状态已经跨越页面、布局或多个功能域，Pinia 更合适。
+
+## 常见误区
+
+### 一上来就把所有状态放进 Pinia
+
+这会让局部状态和全局状态混杂，造成过度中心化。
+
+### getters 存第二份状态
+
+getters 应该是派生值，不应替代原始状态存储。
+
+### 组件里直接到处改 store 字段，不封装 action
+
+简单场景可以接受，但复杂业务很快会失去统一入口，难以维护。
+
+### 单一超大 store
+
+这通常意味着边界设计已经失败，后续所有功能都开始耦合到同一个模块。
+
+## 文末速查
+
+| 问题                   | 选择建议                |
+| ---------------------- | ----------------------- |
+| 状态只在单组件里用     | 先用 `ref` / `reactive` |
+| 状态只在局部树共享     | 先用 `provide/inject`   |
+| 状态跨页面、跨模块共享 | 用 Pinia                |
+| 状态本身               | `state`                 |
+| 派生结果               | `getters`               |
+| 更新动作与业务逻辑     | `actions`               |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Pinia 的价值不在于“集中存状态”，而在于把应用级共享状态的边界、派生和更新路径稳定下来。

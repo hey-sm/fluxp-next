@@ -1,0 +1,372 @@
+---
+title: Fiber架构
+category: react
+excerpt: React Fiber 的设计目标、节点结构、双缓冲机制，以及它如何支撑现代 React 的渲染与调度。
+slug: react-fiber-guide
+tags: [React, Fiber, Rendering, Scheduler, Concurrent Rendering]
+---
+
+{/* @format */}
+
+# React Fiber 架构与渲染流程指南
+
+Fiber 是现代 React 渲染架构的核心基础。讨论 React 18 与 React 19 的并发渲染、Suspense、transition、流式 SSR 与 hydration，如果不理解 Fiber，许多现象只能停留在 API 层面的记忆，而难以形成稳定的技术判断。
+
+本文的目标不是做源码逐行分析，而是建立一个完整、准确且可复用的心智模型：Fiber 是什么，它为什么出现，它如何组织节点、如何通过双缓冲支撑 render / commit 流程，以及它如何为现代 React 的调度与并发渲染提供基础。
+
+需要先明确一点：  
+Fiber 不是单个 API，也不是 React 18 才出现的新能力。它是 React 内部的工作单元与节点结构，是现代 React 渲染器的基础数据模型。
+
+## Fiber 是什么
+
+Fiber 可以准确地定义为：  
+React 内部用于表示组件节点、组织更新、承载调度信息的一种数据结构。
+
+它至少承担了四类职责：
+
+- 表示组件树中的节点关系
+- 保存当前节点相关的 props、state 与宿主实例信息
+- 记录本轮更新过程中需要执行的工作
+- 为调度系统提供可切分、可恢复、可丢弃的工作单元
+
+很多资料会把 Fiber 简化成“新的虚拟 DOM”，这种说法不完全准确。更严谨的理解是：
+
+- 虚拟 DOM 更偏向 UI 的结果描述
+- Fiber 更偏向可执行、可调度的工作节点
+
+可以用下面这张对比表概括两者差异：
+
+| 对比维度           | 虚拟 DOM     | Fiber                        |
+| ------------------ | ------------ | ---------------------------- |
+| 关注重点           | UI 结果描述  | 渲染工作组织                 |
+| 主要作用           | 表示界面结构 | 表示节点并承载更新与调度信息 |
+| 是否强调执行过程   | 弱           | 强                           |
+| 是否适合中断与恢复 | 不擅长       | 是 Fiber 的核心设计目标之一  |
+
+因此，Fiber 的意义不在于单纯把树结构换了一种写法，而在于把 React 渲染从“同步地一次完成全部工作”转变为“由大量可调度工作单元组成的执行过程”。
+
+## 为什么 React 需要 Fiber
+
+Fiber 的出现，首先是为了解决旧渲染模型的结构性限制。
+
+在更早的同步递归更新模式下，React 的主要问题包括：
+
+- 更新过程一旦开始，就倾向于一路递归执行到底
+- 大型组件树更新时，主线程容易被长时间占用
+- 很难细粒度表达哪些更新更紧急、哪些可以延后
+- 一旦需要中断、恢复或放弃一部分工作，代价较高
+
+这些限制在小型树中问题不明显，但当应用规模增大、交互变复杂、异步等待增多时，就会直接影响体验。
+
+Fiber 对这些问题的解决方式不是“局部补丁”，而是重新定义渲染工作如何被组织。
+
+Fiber 的核心改进包括：
+
+- 把更新过程拆成更小的工作单元
+- 允许渲染工作暂停、恢复或丢弃
+- 让不同类型更新具备不同优先级
+- 让 Suspense、transition、并发渲染具备稳定的底层支撑
+
+因此，Fiber 的本质价值可以归纳为一句话：
+
+> Fiber 让 React 渲染从“同步一口气做完”转变为“可调度、可中断的工作流”。
+
+## Fiber 节点结构
+
+Fiber 节点并不是简单的树对象。它是一个包含节点信息、链式指针、更新结果和调度痕迹的工作结构。
+
+在不进入源码逐字段分析的前提下，理解这些字段的角色已经足够建立系统认知：
+
+- `type`
+  表示当前 Fiber 对应的组件类型，例如原生标签、函数组件或类组件。
+- `key`
+  用于同层级节点的稳定识别，参与 diff 过程。
+- `stateNode`
+  指向与该 Fiber 对应的宿主实例或组件实例，例如某个 DOM 节点。
+- `return`
+  指向父 Fiber。
+- `child`
+  指向第一个子 Fiber。
+- `sibling`
+  指向下一个兄弟 Fiber。
+- `pendingProps`
+  当前正在处理中的新 props。
+- `memoizedProps`
+  上一次已完成渲染后保留下来的 props。
+- `memoizedState`
+  上一次已完成渲染后保留下来的 state。
+- `alternate`
+  指向当前 Fiber 对应的另一份 Fiber，用于双缓冲。
+- `flags`
+  记录该节点在 commit 阶段需要执行的副作用类型。
+
+Fiber 使用的不是传统“每个节点只有 children 数组”的结构，而是父子兄弟链式组织方式。这种组织方式的优势在于：
+
+- 遍历过程更容易细粒度控制
+- 每个节点都是清晰的工作单元
+- 更适合与暂停、恢复、中断机制配合
+
+可以用一个简化结构图来理解：
+
+```text
+App Fiber
+  return -> null
+  child  -> Header Fiber
+
+Header Fiber
+  return  -> App Fiber
+  sibling -> Content Fiber
+
+Content Fiber
+  return -> App Fiber
+  child  -> Article Fiber
+```
+
+这里要注意一个常见误区：  
+Fiber 树不是简单为了“存 UI”，而是为了“让 UI 更新过程变成一系列可操作节点”。
+
+## Fiber 双缓冲机制
+
+双缓冲是理解 Fiber 的核心章节之一。
+
+React 不会直接在当前已经显示在页面上的 Fiber 树上原地硬改，而是维护两棵相互对应的树：
+
+- `current tree`
+  当前已经提交并正在页面上生效的 Fiber 树
+- `workInProgress tree`
+  正在为下一次更新而计算中的 Fiber 树
+
+这两棵树通过 `alternate` 指针建立对应关系。
+
+### current tree 与 workInProgress tree
+
+可以先把这两者理解成：
+
+- `current tree`：当前线上版本
+- `workInProgress tree`：下一版草稿
+
+更新发生时，React 会基于当前树构建或复用一棵 `workInProgress tree`，在这棵树上执行 render phase 的所有计算。等到结果准备完成后，再在 commit phase 中把它切换成新的 `current tree`。
+
+这就是 React 内部的双缓冲机制。
+
+### alternate 的作用
+
+`alternate` 的作用是把“当前版本的节点”和“正在计算中的对应节点”关联起来。
+
+也就是说，某个 Fiber 节点不是孤立存在的，它通常会有一个镜像对应体：
+
+- 当前树中的节点
+- 工作树中的对应节点
+
+两者之间通过 `alternate` 互相指向。
+
+这使 React 可以：
+
+- 在已有结构基础上复用大量节点信息
+- 清晰地区分“当前已提交状态”和“下一轮正在计算状态”
+- 在完成后高效切换新旧树
+
+### render phase 在 workInProgress tree 上进行
+
+Fiber 双缓冲机制最关键的结论是：
+
+- render phase 主要发生在 `workInProgress tree`
+- 当前页面可见状态仍然由 `current tree` 代表
+
+这意味着 React 可以在后台安全地做这些事：
+
+- 执行组件函数
+- 比较新旧节点
+- 收集副作用
+- 中断或重试尚未提交的工作
+
+而不会污染当前已经显示给用户的那棵树。
+
+### commit phase 完成后发生树切换
+
+当 render phase 结束，React 得到一棵可以提交的 `workInProgress tree` 后，进入 commit phase：
+
+- 将副作用真正提交到宿主环境
+- 更新 DOM / ref / 生命周期相关工作
+- 让 `workInProgress tree` 成为新的 `current tree`
+
+因此，commit 完成后的树切换，本质上不是“在旧树上继续补丁式改动”，而是“让已经准备好的下一版本正式生效”。
+
+### 为什么双缓冲很重要
+
+双缓冲机制是现代 React 若干关键特性的共同基础：
+
+- React 不需要在当前已显示树上边算边改
+- render 计算和最终提交可以彻底分离
+- 未完成的 render work 可以被暂停、恢复、放弃
+- DOM 提交可以保持原子性
+
+可以用一个非常具体的例子理解：
+
+```text
+当前页面显示：count = 1
+current tree 表示这一版 UI
+
+用户点击按钮后：
+1. React 创建或复用 workInProgress tree
+2. 在 workInProgress tree 上计算 count = 2
+3. render phase 期间，如有更高优先级任务，可暂停这次工作
+4. 一旦 workInProgress tree 计算完成，进入 commit phase
+5. DOM 一次性更新为 count = 2
+6. workInProgress tree 变为新的 current tree
+```
+
+需要特别强调：
+
+- React 不直接在当前已显示树上硬改
+- 双缓冲保证渲染计算与最终提交分离
+- 这正是原子提交与可中断渲染能够成立的重要基础
+
+## Fiber 如何支撑渲染流程
+
+Fiber 与渲染流程的关系，可以从 render phase 和 commit phase 两部分理解。
+
+### render phase：构建工作树、比较变更、收集副作用
+
+在 render phase 中，React 的主要工作包括：
+
+- 基于 current tree 构建或复用 workInProgress tree
+- 执行组件函数，得到下一版 UI 结构
+- 进行节点比较
+- 在 Fiber 节点上标记后续 commit 需要做的工作
+
+这一阶段的本质不是“改 DOM”，而是“计算出下一版应当如何更新”。
+
+因为这一切都发生在 `workInProgress tree` 上，所以 render phase 可以：
+
+- 中断
+- 恢复
+- 重试
+- 丢弃未完成结果
+
+### commit phase：统一提交宿主变更
+
+在 commit phase 中，React 会把 render phase 中已经准备好的结果一次性提交：
+
+- 执行宿主环境更新，例如 DOM 变更
+- 处理 ref
+- 执行与提交相关的副作用
+
+这一阶段的关键特征是：
+
+- 不可中断
+- 保持原子性
+- 面向最终用户可见结果
+
+因此，Fiber 对 render / commit 的支撑关系可以概括为：
+
+- Fiber 让 render phase 成为一个可组织、可切分、可暂停的工作过程
+- Fiber 让 commit phase 只负责一次性提交最终结果
+
+这也是为什么“组件函数执行了”与“DOM 已经更新”之间存在时序差异。
+
+## Fiber 与调度、并发渲染的关系
+
+Fiber 本身不是调度器，但它为调度提供了可切分的工作单元。
+
+如果没有 Fiber，调度系统即使知道“有高优先级任务插入”，也很难优雅地暂停当前工作并在之后恢复。Fiber 的存在让 React 可以把整个渲染过程拆成节点级别的工作，从而让调度系统具备真正的操作空间。
+
+这种配合关系可以概括为：
+
+- Fiber 负责把工作拆成节点单元
+- 调度系统决定何时执行、暂停、恢复或放弃这些单元
+
+因此，并发渲染之所以成立，不是因为 React 同时提交多个 DOM 版本，而是因为：
+
+- 渲染工作被拆分了
+- 每个工作单元可被调度
+- workInProgress tree 允许后台安全计算
+
+这也是为什么 Fiber 是并发渲染的必要基础之一。
+
+## Fiber 与现代 React 能力的关系
+
+Fiber 本身不是这些功能，但现代 React 的许多能力都建立在 Fiber 提供的渲染基础之上。
+
+### 自动 batching
+
+自动 batching 的本质是让多个更新合并到更合理的渲染流程中。Fiber 让这些更新可以在统一工作树中被组织和处理。
+
+### startTransition
+
+`startTransition` 的核心是把部分更新标记为可延后的工作。没有 Fiber 提供的可切分工作单元，这种优先级调度很难稳定实现。
+
+### Suspense
+
+Suspense 的等待、回退与恢复，不只是一个语法层概念。其底层依赖于 React 能够暂停某部分 render work，并在条件满足后继续推进。
+
+### 流式 SSR
+
+React 18 之后的流式 SSR，不再是“等整棵树完全结束再统一输出”，而是允许不同分支按准备状态分段输出。这背后同样依赖现代 Fiber 渲染模型。
+
+### hydration
+
+hydration 需要客户端 Fiber 树与服务端输出的 HTML 建立一致关系，并继续推进后续更新。现代 hydration 体验的提升，也建立在 Fiber 体系之上。
+
+因此，更准确的表述是：
+
+> Fiber 不是这些能力本身，但它是这些能力赖以成立的渲染基础。
+
+## 常见误区
+
+下面这些误解在 React 学习中非常常见。
+
+### Fiber 不等于虚拟 DOM 本身
+
+Fiber 与虚拟 DOM 有重叠，但两者的重心不同。虚拟 DOM 更偏描述结构，Fiber 更偏组织执行过程。
+
+### 并发渲染不等于 DOM 会部分提交
+
+并发发生在 render phase 的工作调度中，而不是让用户看到“半棵树已经更新”的中间状态。DOM 提交仍然在 commit phase 中保持原子性。
+
+### Fiber 不是 React 18 才出现
+
+Fiber 架构早于 React 18。React 18 是在 Fiber 基础上进一步完整释放现代并发渲染能力，而不是第一次引入 Fiber。
+
+### Fiber 不是开发者直接调用的 API
+
+开发者平时使用的是 `useState`、`startTransition`、Suspense 等公开 API。Fiber 是 React 内部实现模型，不是业务代码直接操作的对象。
+
+### 双缓冲不是浏览器绘图概念的简单照搬
+
+它虽然和前后缓冲区的思路类似，但在 React 里具体指的是 current tree 与 workInProgress tree 的切换机制，而不是浏览器图形绘制接口的直接复制。
+
+## 文末速查
+
+### Fiber 一句话定义
+
+Fiber 是 React 内部用于表示节点、承载更新并支撑调度的工作单元与数据结构。
+
+### 双缓冲一句话定义
+
+双缓冲是 React 同时维护 `current tree` 与 `workInProgress tree`，在后台完成计算后再一次性切换当前树的机制。
+
+### current / workInProgress / alternate
+
+- `current`：当前已经提交并生效的 Fiber 树
+- `workInProgress`：正在为下一次更新而计算的 Fiber 树
+- `alternate`：两棵对应 Fiber 节点之间的互相引用
+
+### render / commit 与 Fiber 的关系
+
+- render phase：主要在 workInProgress tree 上完成计算
+- commit phase：将最终结果原子提交，并让工作树成为新的 current tree
+
+## 结语
+
+理解 Fiber，关键不在于记住多少内部字段，而在于理解它解决了什么问题，以及它如何支撑现代 React 的运行方式。
+
+Fiber 的真正意义在于：
+
+- 它让渲染工作可以被拆分
+- 它让更新过程可以被调度
+- 它让 render 与 commit 得以清晰分离
+- 它让并发渲染、Suspense、transition、流式 SSR 与 hydration 具备稳定基础
+
+一旦这一点清晰，React 18 与 React 19 中许多看似分散的能力，就会自然地收束到同一个框架之下：  
+它们并不是零散特性，而是建立在 Fiber 这一现代渲染基础上的不同表现形式。

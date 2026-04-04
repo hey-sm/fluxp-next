@@ -1,0 +1,211 @@
+---
+title: Proxy、重写与重定向
+category: nextjs
+excerpt: 围绕 proxy.ts、matcher、rewrite、redirect 与前置请求控制，系统讲清 Next.js 当前官方文档中的 Proxy 主线及其与重写、重定向的边界。
+slug: nextjs-proxy-rewrites-and-redirects
+tags: [Next.js, Proxy, Rewrites, Redirects, matcher]
+---
+
+{/* @format */}
+
+# Next.js Proxy、重写与重定向
+
+Next.js 中有一类能力不直接发生在页面组件里，而发生在请求真正进入路由或渲染之前：请求前置控制。现代官方文档把这条线统一收敛到了 `Proxy` 语义下，它适合做基于 URL、Header、Cookie 和请求来源的前置判断，并与 rewrite、redirect 等能力协作。
+
+这篇文章的重点不是罗列 API，而是厘清边界：什么应该用 `proxy.ts`，什么应该用静态 `redirects` / `rewrites`，什么又不该放到 Proxy 中解决。
+
+官方文档主线参考：
+
+- [Proxy](https://nextjs.org/docs/app/getting-started/proxy)
+- [NextResponse](https://nextjs.org/docs/app/api-reference/functions/next-response)
+- [redirects in next.config.js](https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects)
+- [rewrites in next.config.js](https://nextjs.org/docs/app/api-reference/config/next-config-js/rewrites)
+
+## 版本说明
+
+当前官方文档已经把这条能力主线收敛为 `Proxy`。如果你有旧版本经验，可能更熟悉 `Middleware` 这个名字；理解文档时应以当前官方命名和语义为准，但同时知道这条能力线与历史 `Middleware` 存在连续性。
+
+## 先建立一个整体认知
+
+请求进入应用时，常见的三类前置控制分别是：
+
+- `redirect`：告诉客户端去另一个 URL
+- `rewrite`：内部改写请求目标，但地址栏不变
+- `Proxy`：在请求真正进入路由前执行条件逻辑
+
+如果只是固定规则，优先配置式重写或重定向；如果需要运行时条件判断，再考虑 `Proxy`。
+
+## Proxy
+
+一句话定义：`proxy.ts` 是 Next.js 中处理请求前置逻辑的约定式入口文件。
+
+它解决什么问题：某些请求控制无法通过静态配置表达，例如基于 Cookie、Header、地区、A/B 标记或实验分流执行条件逻辑。
+
+什么时候用：
+
+- 登录前置判断
+- A/B 实验流量分流
+- 某类请求统一附加 Header 或改写目标
+- 特定路径前置过滤
+
+```ts
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+
+export function proxy(request: NextRequest) {
+  if (!request.cookies.get('session')) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  return NextResponse.next()
+}
+```
+
+常见注意点：Proxy 的职责是“请求前置控制”，不是通用业务逻辑容器，也不应替代页面层鉴权与服务层权限检查。来源：[Proxy](https://nextjs.org/docs/app/getting-started/proxy)
+
+## matcher
+
+一句话定义：`matcher` 用于限制 Proxy 只作用于指定路径集合。
+
+它解决什么问题：如果每个请求都进 Proxy，会带来不必要的运行成本和认知复杂度。`matcher` 用于把影响范围收紧到真正需要拦截的路径。
+
+什么时候用：
+
+- 只保护后台路径
+- 只对某组 API 路径生效
+- 避免静态资源和公共路径进入同一套前置逻辑
+
+```ts
+export const config = {
+  matcher: ['/dashboard/:path*', '/settings/:path*'],
+}
+```
+
+常见注意点：Proxy 范围越小越稳。不要把整个站点都纳入同一份复杂前置逻辑。
+
+## redirect
+
+一句话定义：重定向会让请求转到另一个 URL，并把这个跳转语义显式暴露给客户端与搜索引擎。
+
+它解决什么问题：有些路径已经永久迁移，或某类访问条件下必须显式离开当前路径。
+
+什么时候用：
+
+- 旧路径迁移到新路径
+- 未登录用户跳转登录页
+- 地域、语言、版本入口切换
+
+```ts
+return NextResponse.redirect(new URL('/login', request.url))
+```
+
+常见注意点：重定向会改变用户可见 URL，因此应只在语义上确实发生“跳到别处”的时候使用。
+
+## rewrite
+
+一句话定义：重写会把请求内部改发到另一个目标，但保持地址栏 URL 不变。
+
+它解决什么问题：有些场景需要内部映射而非显式跳转，例如按实验分流、版本路由、后端代理或多租户隐藏真实路径结构。
+
+什么时候用：
+
+- 将 `/docs` 内部映射到另一个路由段
+- 实验版本落到不同页面实现
+- 对接后端代理目标
+
+```ts
+return NextResponse.rewrite(new URL('/experiments/a', request.url))
+```
+
+常见注意点：rewrite 的优势是 URL 保持稳定，但也正因为如此，更容易掩盖真实流向。重写规则必须清晰、可追踪，不能在项目里形成黑盒跳线。
+
+## next.config.js 中的 redirects / rewrites
+
+一句话定义：当规则是固定的、可预先声明的，应优先使用 `next.config.js` 中的 `redirects` 或 `rewrites`。
+
+它解决什么问题：很多 URL 迁移并不依赖运行时条件，如果每次都进 Proxy 才判断，既多余也更难维护。
+
+什么时候用：
+
+- 固定旧路径迁移
+- 稳定的 URL 别名
+- 可声明的内部路径映射
+
+```ts
+export default {
+  async redirects() {
+    return [{ source: '/old', destination: '/new', permanent: true }]
+  },
+}
+```
+
+常见注意点：能静态配置就不要先上 Proxy。Proxy 应保留给“静态配置表达不了”的条件逻辑。
+
+## 常见使用场景
+
+### 鉴权前置
+
+当后台路由在进入页面前需要先检查会话标识时，可以在 Proxy 中快速做路径级前置判断。但更深层的权限判断仍应在页面或服务端数据层继续验证。
+
+### 实验与分流
+
+当你需要基于 Cookie、Header 或地域把请求分流到不同实现时，Proxy 非常合适，因为它发生在页面渲染前。
+
+### URL 兼容迁移
+
+如果只是大量固定旧路径迁移，更适合 `next.config.js redirects`；只有规则依赖运行时条件时，才需要 Proxy 参与。
+
+## Proxy 不该做什么
+
+下面这些职责不适合放进 Proxy：
+
+- 复杂业务领域逻辑
+- 数据库重查询与大规模数据聚合
+- 完整认证系统的全部实现
+- 用于替代页面内部权限校验
+
+Proxy 更像路由入口的边界层，而不是业务中心。
+
+## 一个更稳的选择顺序
+
+在真实项目里，更稳的顺序通常是：
+
+- 固定 URL 迁移：优先 `redirects` / `rewrites`
+- 条件式前置控制：再用 `proxy.ts`
+- 页面内流程跳转：用 `redirect()` 或客户端导航
+- 更深层权限和数据校验：放回页面、Route Handlers 或服务层
+
+这条顺序能有效避免把所有“与 URL 有关的事”都堆进 Proxy。
+
+## 常见误区
+
+### 误区一：只要涉及鉴权就必须用 Proxy
+
+不准确。Proxy 适合前置拦截，但真正授权判断往往仍需要在页面和数据层再次确认。
+
+### 误区二：rewrite 和 redirect 差不多
+
+不准确。一个保持地址栏不变，一个显式改变 URL，语义完全不同。
+
+### 误区三：Proxy 可以自然承接所有后端中间件职责
+
+不准确。它适合请求入口控制，不适合作为无边界的业务中间层。
+
+### 误区四：既然有 Proxy，就不需要 `next.config.js` 的 redirects / rewrites
+
+不准确。固定规则应优先配置式声明，维护成本更低。
+
+## 文末速查
+
+| 场景 | 优先想到的能力 |
+| --- | --- |
+| 固定旧路径迁移 | `redirects` |
+| 固定内部路径映射 | `rewrites` |
+| 运行时条件式前置控制 | `proxy.ts` |
+| 限制前置逻辑作用范围 | `matcher` |
+| 页面内服务端流程跳转 | `redirect()` |
+| 地址栏不变但内部改路由 | `rewrite` |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Proxy 的职责是“请求进入应用前的条件控制”，而不是把所有路由、鉴权和业务判断都提前堆到入口层。

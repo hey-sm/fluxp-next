@@ -1,0 +1,293 @@
+---
+title: 核心 API
+category: nextjs
+excerpt: 围绕 Link、Image、Script、redirect、permanentRedirect、notFound、headers、cookies 与 draftMode，系统梳理 Next.js App Router 中最常用的一组核心 API。
+slug: nextjs-core-api
+tags: [Next.js, App Router, Link, Image, redirect]
+---
+
+{/* @format */}
+
+# Next.js 核心 API
+
+如果把 Next.js 只理解成“一个会路由的 React 框架”，就很容易低估它的主线能力。App Router 语境下，Next.js 的日常开发并不只围绕 React 组件本身，还围绕一组非常关键的框架 API：导航、资源优化、请求上下文、重定向、404 处理以及预览模式。
+
+这篇文章只聚焦高频核心 API，不重复展开 React Hooks，也不提前进入缓存、Route Handlers、Server Actions 等更完整的专题。目标是建立一个稳定判断框架：遇到页面跳转、图片优化、脚本注入、请求上下文读取、重定向或内容预览时，首先应该想到哪个 Next.js API。
+
+官方文档主线参考：
+
+- [Linking and Navigating](https://nextjs.org/docs/app/getting-started/linking-and-navigating)
+- [Image Optimization](https://nextjs.org/docs/app/getting-started/images)
+- [Metadata and OG images](https://nextjs.org/docs/app/getting-started/metadata-and-og-images)
+- [Proxy](https://nextjs.org/docs/app/getting-started/proxy)
+
+## 核心 API 的整体分工
+
+可以先把这一组 API 分成三层：
+
+- 导航与路由控制：`Link`、`redirect`、`permanentRedirect`、`notFound`
+- 资源优化：`Image`、`Script`
+- 请求上下文与内容控制：`headers`、`cookies`、`draftMode`
+
+掌握这三层之后，App Router 里一大批“框架型问题”就有了清晰入口。
+
+## Link
+
+一句话定义：`Link` 是 Next.js 的内建导航组件，用于实现带预取优化的客户端路由跳转。
+
+它解决什么问题：如果直接使用原生 `<a>`，会退回整页刷新；而 `Link` 会接入 Next.js 的导航优化能力，包括预取和客户端导航。
+
+什么时候用：
+
+- 站内页面跳转
+- 列表页到详情页导航
+- 菜单、面包屑、分页等路由链接
+
+```tsx
+import Link from 'next/link'
+
+export default function PostCard() {
+  return <Link href="/blog/react-fiber-guide">查看文章</Link>
+}
+```
+
+常见注意点：`Link` 适用于站内路由，不是所有 URL 都必须用它。跳转到外部站点时，直接使用普通 `<a>` 往往更自然。来源：[Link Component](https://nextjs.org/docs/app/api-reference/components/link)
+
+## Image
+
+一句话定义：`Image` 是 Next.js 的图片组件，用于提供尺寸感知、懒加载、响应式和优化输出能力。
+
+它解决什么问题：图片是性能问题最常见的来源之一。`Image` 帮助你在不手写复杂优化逻辑的前提下获得更合理的图片加载体验。
+
+什么时候用：
+
+- 页面主视觉图
+- 列表缩略图
+- 用户头像、文章封面、产品图
+
+```tsx
+import Image from 'next/image'
+
+export default function Hero() {
+  return (
+    <Image
+      src="/hero.png"
+      alt="Dashboard preview"
+      width={1280}
+      height={720}
+    />
+  )
+}
+```
+
+常见注意点：`Image` 不是“所有图片都无脑替换”的按钮。更重要的是理解尺寸来源、布局需求和远程图片配置，否则很容易出现布局不稳或配置缺失问题。来源：[Image Optimization](https://nextjs.org/docs/app/getting-started/images)
+
+## Script
+
+一句话定义：`Script` 用于在 Next.js 中以受控方式加载第三方脚本，并指定加载时机。
+
+它解决什么问题：大量第三方统计、埋点和 SDK 脚本如果直接散落在页面里，会影响性能和执行顺序，`Script` 提供了更稳定的加载控制。
+
+什么时候用：
+
+- 统计脚本
+- 第三方客服、地图、支付 SDK
+- 明确依赖加载顺序的外部脚本
+
+```tsx
+import Script from 'next/script'
+
+export default function Analytics() {
+  return (
+    <Script
+      src="https://example.com/analytics.js"
+      strategy="afterInteractive"
+    />
+  )
+}
+```
+
+常见注意点：`Script` 的关键不只是“能加载脚本”，而是选择合适的 `strategy`。第三方脚本越重，越要避免默认把它塞进初始交互关键路径。来源：[Script Component](https://nextjs.org/docs/app/api-reference/components/script)
+
+## redirect
+
+一句话定义：`redirect()` 用于在服务端逻辑中发起一次立即跳转。
+
+它解决什么问题：有些跳转不是由用户点击触发，而是由权限、数据缺失或流程控制触发。`redirect()` 让这类导航成为渲染链路的一部分。
+
+什么时候用：
+
+- 未登录跳转登录页
+- 创建成功后跳转详情页
+- 数据条件不满足时跳到其他路由
+
+```tsx
+import { redirect } from 'next/navigation'
+
+export default async function Page() {
+  const user = null
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  return <div>Dashboard</div>
+}
+```
+
+常见注意点：`redirect()` 不是普通返回值，而是通过抛出特殊控制流中断当前渲染。不要把它写成“调用后继续执行后续逻辑”的风格。来源：[redirect](https://nextjs.org/docs/app/api-reference/functions/redirect)
+
+## permanentRedirect
+
+一句话定义：`permanentRedirect()` 用于发起永久重定向，适合 URL 永久迁移语义。
+
+它解决什么问题：有些跳转不是临时流程控制，而是路由结构本身已经改变。此时永久重定向比普通临时跳转更准确。
+
+什么时候用：
+
+- 内容永久迁移
+- 旧 slug 改为新 slug
+- 站点结构重构后的旧路径兼容
+
+```tsx
+import { permanentRedirect } from 'next/navigation'
+
+export default async function Page() {
+  permanentRedirect('/docs/nextjs-core-api')
+}
+```
+
+常见注意点：永久重定向带有更强的缓存和搜索引擎语义，不应把临时业务跳转误写成永久迁移。来源：[permanentRedirect](https://nextjs.org/docs/app/api-reference/functions/permanentRedirect)
+
+## notFound
+
+一句话定义：`notFound()` 用于在当前路由段主动进入 404 分支，并触发对应的 `not-found.tsx` UI。
+
+它解决什么问题：很多 404 并不是“路径不存在”，而是“路径存在，但对应资源不存在”。`notFound()` 让资源级 404 成为渲染的一部分。
+
+什么时候用：
+
+- 文章 slug 不存在
+- 商品 id 无对应数据
+- 当前资源对用户不可见且希望表现为 404
+
+```tsx
+import { notFound } from 'next/navigation'
+
+export default async function Page() {
+  const post = null
+
+  if (!post) {
+    notFound()
+  }
+
+  return <article>{post.title}</article>
+}
+```
+
+常见注意点：`notFound()` 的目标是进入明确的 404 语义，而不是泛化成“所有异常都用它处理”。来源：[notFound](https://nextjs.org/docs/app/api-reference/functions/not-found)
+
+## headers
+
+一句话定义：`headers()` 用于在服务端读取当前请求头信息。
+
+它解决什么问题：有些渲染逻辑和元数据逻辑依赖请求上下文，例如 User-Agent、语言或自定义头。
+
+什么时候用：
+
+- 基于请求头做轻量判断
+- 读取追踪头、语言头、UA 信息
+- 在 Route Handlers 或服务端组件里感知请求上下文
+
+```tsx
+import { headers } from 'next/headers'
+
+export default async function Page() {
+  const headerStore = await headers()
+  const userAgent = headerStore.get('user-agent')
+
+  return <pre>{userAgent}</pre>
+}
+```
+
+常见注意点：读取请求上下文本身就可能让路由具备动态特征，因此不应把 `headers()` 当成随手可用、没有成本的全局读取入口。来源：[headers](https://nextjs.org/docs/app/api-reference/functions/headers)
+
+## cookies
+
+一句话定义：`cookies()` 用于在服务端读取或写入当前请求相关的 Cookie。
+
+它解决什么问题：主题、会话偏好、实验分组和轻量状态都可能依赖 Cookie，而 `cookies()` 是 App Router 下的直接入口。
+
+什么时候用：
+
+- 读取用户主题偏好
+- 读取登录相关 cookie
+- 在 Server Actions 或 Route Handlers 中写入 cookie
+
+```tsx
+import { cookies } from 'next/headers'
+
+export default async function Page() {
+  const cookieStore = await cookies()
+  const theme = cookieStore.get('theme')?.value ?? 'light'
+
+  return <div>{theme}</div>
+}
+```
+
+常见注意点：Cookie 读取和写入都属于请求上下文能力，应该放在明确的服务端边界中，而不是扩散成通用状态管理方案。来源：[cookies](https://nextjs.org/docs/app/api-reference/functions/cookies)
+
+## draftMode
+
+一句话定义：`draftMode()` 用于控制预览模式，让内容系统中的草稿数据可以在站点中受控预览。
+
+它解决什么问题：正式发布内容和草稿内容往往不应走同一条缓存与展示路径，`draftMode` 提供了内容预览的官方入口。
+
+什么时候用：
+
+- CMS 草稿预览
+- 编辑态页面预览
+- 需要绕过正式内容缓存的受控预览流程
+
+```tsx
+import { draftMode } from 'next/headers'
+
+export default async function Page() {
+  const { isEnabled } = await draftMode()
+
+  return <div>{isEnabled ? 'draft' : 'published'}</div>
+}
+```
+
+常见注意点：`draftMode` 解决的是内容预览链路，不是通用环境切换开关，也不应替代正式的权限校验。来源：[draftMode](https://nextjs.org/docs/app/api-reference/functions/draft-mode)
+
+## 一条更稳定的使用顺序
+
+把这些 API 放回真实项目里，一个比较稳定的判断顺序通常是：
+
+- 页面跳转优先想到 `Link`
+- 服务端流程跳转优先想到 `redirect` / `permanentRedirect`
+- 资源缺失优先想到 `notFound()`
+- 图片和外部脚本分别优先想到 `Image` 和 `Script`
+- 读取请求上下文优先想到 `headers()`、`cookies()`
+- 内容草稿预览优先想到 `draftMode()`
+
+这条顺序的重点不在“API 名字记没记住”，而在于把问题放回 Next.js 的框架语义中解决。
+
+## 文末速查
+
+| 场景 | 优先想到的 API |
+| --- | --- |
+| 站内导航 | `Link` |
+| 图片优化 | `Image` |
+| 第三方脚本加载 | `Script` |
+| 服务端流程跳转 | `redirect` |
+| 永久迁移旧 URL | `permanentRedirect` |
+| 资源级 404 | `notFound` |
+| 读取请求头 | `headers` |
+| 读取或写入 Cookie | `cookies` |
+| 内容预览模式 | `draftMode` |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 下很多问题并不是“React 组件怎么写”，而是“该接入哪一个 Next.js 框架 API”。

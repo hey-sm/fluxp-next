@@ -1,0 +1,266 @@
+---
+title: 渲染与缓存
+category: nextjs
+excerpt: 围绕静态渲染、动态渲染、Data Cache、Full Route Cache、Router Cache、revalidatePath、revalidateTag 与 updateTag，系统讲清 Next.js App Router 的渲染与缓存主线。
+slug: nextjs-rendering-cache-and-revalidation
+tags: [Next.js, Rendering, Cache, Revalidation, Data Cache]
+---
+
+{/* @format */}
+
+# Next.js 渲染与缓存
+
+Next.js App Router 最容易被误解的一块，就是渲染和缓存。很多旧经验已经不再适用：`fetch` 的默认缓存语义变了，页面是否静态不只看有没有接口请求，客户端导航又引入了新的缓存层，数据更新后还涉及路径级和标签级重验证。
+
+如果没有一套稳定的判断框架，项目很容易陷入两种极端：要么“全都动态”，浪费 Next.js 的优势；要么“误以为都缓存”，导致数据新鲜度出问题。
+
+官方文档主线参考：
+
+- [Caching and Revalidating](https://nextjs.org/docs/app/getting-started/caching-and-revalidating)
+- [Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+- [Caching Deep Dive](https://nextjs.org/docs/app/deep-dive/caching)
+- [Route Segment Config](https://nextjs.org/docs/app/api-reference/file-conventions/route-segment-config)
+
+## 先建立一个整体认知
+
+在当前 App Router 主线下，可以把渲染与缓存分成三层：
+
+- 渲染方式：静态渲染、动态渲染
+- 服务端缓存：Data Cache、Full Route Cache
+- 客户端缓存：Router Cache
+
+再往上，重验证 API 负责在数据变更后驱动缓存更新：
+
+- `revalidatePath`
+- `revalidateTag`
+- `updateTag`
+
+## 静态渲染
+
+一句话定义：静态渲染指的是路由可以在构建期或缓存阶段提前完成渲染，并在后续请求中复用结果。
+
+它解决什么问题：对于不依赖请求期上下文、内容变化不频繁的页面，静态渲染能显著提升首屏速度和吞吐效率。
+
+什么时候用：
+
+- 文档页
+- 营销页
+- 更新频率低的内容页
+
+常见注意点：静态渲染并不等于页面内没有数据获取，而是这些数据获取没有迫使路由退回请求期动态执行。来源：[Caching and Revalidating](https://nextjs.org/docs/app/getting-started/caching-and-revalidating)
+
+## 动态渲染
+
+一句话定义：动态渲染指的是页面在请求到达时执行渲染逻辑，以获取请求期数据或动态上下文。
+
+它解决什么问题：用户个性化内容、实时数据、权限相关页面和依赖运行时请求信息的场景都无法稳定预渲染。
+
+什么时候用：
+
+- 个性化 dashboard
+- 依赖 `cookies()`、`headers()`、搜索参数的页面
+- 强实时数据视图
+
+常见注意点：动态渲染不是“性能差”的代名词，而是语义更准确的执行方式。关键在于知道哪些内容真的需要请求期执行。
+
+## fetch 的默认语义
+
+一句话定义：在当前官方主线里，`fetch` 请求默认不缓存，但路由本身仍可能被预渲染并缓存 HTML。
+
+它解决什么问题：这是理解 App Router 缓存行为的关键前提，能避免把旧版本“默认全缓存”的经验错误带入新项目。
+
+```tsx
+export default async function Page() {
+  const response = await fetch('https://api.vercel.app/blog')
+  const posts = await response.json()
+  return <pre>{JSON.stringify(posts, null, 2)}</pre>
+}
+```
+
+常见注意点：官方文档明确指出，`fetch` 默认不缓存；如果要缓存单个请求，应显式指定 `cache: 'force-cache'` 或使用相关缓存能力。不要把“路由被预渲染”误读为“每个 fetch 都被缓存”。来源：[Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+
+## Data Cache
+
+一句话定义：Data Cache 是 Next.js 在服务端对可缓存数据请求结果进行保存的一层缓存。
+
+它解决什么问题：数据请求往往比 HTML 更适合做细粒度缓存控制，例如一个页面中的某个远程资源可以被缓存、打标签并单独失效。
+
+什么时候用：
+
+- CMS 内容
+- 产品列表
+- 可接受一定时间缓存的数据源
+
+```tsx
+export default async function Page() {
+  const response = await fetch('https://api.vercel.app/blog', {
+    cache: 'force-cache',
+    next: { tags: ['posts'] },
+  })
+
+  const posts = await response.json()
+  return <div>{posts.length}</div>
+}
+```
+
+常见注意点：Data Cache 针对的是“数据结果”，不是整页 HTML。它的管理粒度通常比 Full Route Cache 更细。
+
+## Full Route Cache
+
+一句话定义：Full Route Cache 是对整个路由渲染结果进行缓存的一层服务端缓存。
+
+它解决什么问题：如果一个路由可以稳定预渲染，那么缓存整条路由结果通常比每次重新计算完整页面更高效。
+
+什么时候用：
+
+- 内容型页面
+- 营销页和文档页
+- 不依赖请求期动态输入的页面
+
+常见注意点：Full Route Cache 和 Data Cache 并不是二选一关系。一个可静态化路由，内部也可能包含各自带缓存策略的数据请求。
+
+## Router Cache
+
+一句话定义：Router Cache 是 Next.js 在客户端缓存路由段 RSC 负载的一层缓存，用于优化后续导航体验。
+
+它解决什么问题：客户端站内导航时，用户不应每次都像首次请求那样重新下载整个页面链路。Router Cache 帮助 Next.js 复用已访问或已预取的路由段结果。
+
+什么时候用：
+
+- 常见站内回退与前进
+- 菜单切换
+- 预取过的列表和详情导航
+
+常见注意点：Router Cache 是客户端层能力，它优化的是导航体验，不直接替代服务端数据新鲜度策略。来源：[Caching Deep Dive](https://nextjs.org/docs/app/deep-dive/caching)
+
+## revalidatePath
+
+一句话定义：`revalidatePath()` 用于让某个路径对应的缓存结果失效并重新验证。
+
+它解决什么问题：当一次数据变更明确影响某条页面路径时，路径级重验证是最直接的刷新方式。
+
+什么时候用：
+
+- 编辑文章后刷新文章列表页
+- 表单提交后刷新当前详情页或列表页
+
+```ts
+'use server'
+
+import { revalidatePath } from 'next/cache'
+
+export async function createPost() {
+  // mutate
+  revalidatePath('/posts')
+}
+```
+
+常见注意点：`revalidatePath` 简单直接，但粒度偏粗。能用 tag 做精确失效时，通常应优先 tag 方案。
+
+## revalidateTag
+
+一句话定义：`revalidateTag()` 用于按标签使一组缓存条目进入重验证流程。
+
+它解决什么问题：真实项目里的数据依赖往往不是“只影响一条路径”，而是多个页面共用一组数据源。标签级失效更适合这种跨页面共享数据。
+
+什么时候用：
+
+- CMS 内容发布
+- 用户信息在多个页面共享
+- 分类列表和首页都依赖同一组资源
+
+```ts
+'use server'
+
+import { revalidateTag } from 'next/cache'
+
+export async function publishPost() {
+  // mutate
+  revalidateTag('posts', 'max')
+}
+```
+
+常见注意点：当前官方推荐在适合的场景下使用 `revalidateTag(tag, 'max')`，利用 stale-while-revalidate 语义。标签设计应围绕业务域，而不是页面文件名。来源：[revalidateTag](https://nextjs.org/docs/app/api-reference/functions/revalidateTag)
+
+## updateTag
+
+一句话定义：`updateTag()` 用于在 Server Actions 中立即让某个 tag 对应的数据过期，适合 read-your-own-writes 场景。
+
+它解决什么问题：有些交互要求用户提交后立刻看到自己刚写入的数据，而不是等下次访问时后台慢慢刷新。
+
+什么时候用：
+
+- 用户修改个人资料后立即刷新个人视图
+- 需要立刻体现当前用户写入结果的交互
+
+```ts
+'use server'
+
+import { updateTag } from 'next/cache'
+
+export async function updateProfile() {
+  // mutate
+  updateTag('profile')
+}
+```
+
+常见注意点：`updateTag` 只适用于 Server Actions，语义也比 `revalidateTag` 更强。不要把它当成默认的统一失效方案。
+
+## 路由配置与缓存默认值
+
+App Router 里还有一层需要了解的配置能力：route segment config。
+
+```ts
+export const revalidate = 3600
+export const runtime = 'nodejs'
+```
+
+它解决的问题是：当某个页面、布局或 Route Handler 需要统一的路由级行为时，可以通过导出配置变量来描述。
+
+常见注意点：官方文档已经明确说明，在启用 Cache Components 时，一部分 route segment config 会逐步被弱化或替代。因此这组配置应理解为当前稳定模型的一部分，而不是未来所有缓存表达的唯一入口。
+
+## 一个更稳的缓存判断顺序
+
+在真实项目里，更稳定的顺序通常是：
+
+- 先判断页面是否必须动态
+- 再判断某个数据请求是否值得缓存
+- 能按数据域失效时优先设计 tag
+- 只有明确对应路径时才优先 `revalidatePath`
+- 需要“用户写后立即读到”时再考虑 `updateTag`
+
+这条顺序的重点，是把缓存粒度从“页面整体”下沉到“数据与业务域”。
+
+## 常见误区
+
+### 误区一：App Router 下 `fetch` 默认就是缓存的
+
+这已经不是当前官方主线。当前文档明确说明 `fetch` 默认不缓存。
+
+### 误区二：有缓存就一定是静态渲染
+
+不准确。数据缓存、路由缓存和静态渲染不是同一个概念。
+
+### 误区三：所有变更都应该 `revalidatePath`
+
+路径级重验证简单，但并不总是最精确。共享数据通常更适合 tag 驱动。
+
+### 误区四：Router Cache 能解决数据新鲜度
+
+它解决的是客户端导航性能，不是服务端数据一致性。
+
+## 文末速查
+
+| 问题 | 优先想到的能力 |
+| --- | --- |
+| 页面是否能提前生成 | 静态渲染 / 动态渲染判断 |
+| 某个数据请求是否单独缓存 | Data Cache |
+| 整个路由结果是否可复用 | Full Route Cache |
+| 客户端返回导航是否更快 | Router Cache |
+| 某条路径需要刷新 | `revalidatePath` |
+| 一组共享数据需要刷新 | `revalidateTag` |
+| 写入后当前用户要立刻看到最新值 | `updateTag` |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 的缓存不是单层开关，而是“渲染方式 + 数据缓存 + 路由缓存 + 重验证策略”共同组成的一套系统。

@@ -7,22 +7,32 @@ type BlogContentLayoutProps = {
 }
 
 export function BlogContentLayout({ headings = [], children }: BlogContentLayoutProps) {
+  const hasHeadings = headings.length > 0
+
   return (
-    <div className="mx-auto w-full max-w-[112rem] px-4 md:px-8 lg:h-[100dvh] lg:overflow-hidden xl:px-10">
-      <div className="grid gap-8 py-6 lg:h-full lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start lg:gap-10 lg:py-0">
-        <div className="scrollbar-hidden min-w-0 lg:h-[100dvh] lg:overflow-y-auto lg:py-6 lg:pr-6">
+    <div className="w-full lg:h-[100dvh] lg:overflow-hidden">
+      <div
+        className={
+          hasHeadings
+            ? 'grid py-6 lg:h-full lg:grid-cols-[minmax(0,1fr)_22rem] lg:py-0'
+            : 'grid py-6 lg:h-full lg:grid-cols-[minmax(0,1fr)] lg:py-0'
+        }
+      >
+        <div className="scrollbar-hidden min-w-0 px-4 md:px-5 lg:h-[100dvh] lg:overflow-y-auto lg:px-20 lg:py-20">
           <TableOfContents
             headings={headings}
             className="border-border bg-card mb-8 rounded-2xl border p-4 lg:hidden"
           />
           {children}
         </div>
-        <aside className="hidden lg:block lg:h-[100dvh] lg:overflow-hidden lg:py-6">
-          <TableOfContents
-            headings={headings}
-            className="sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto pr-2"
-          />
-        </aside>
+        {hasHeadings ? (
+          <aside className="hidden lg:block lg:h-[100dvh] lg:overflow-hidden">
+            <TableOfContents
+              headings={headings}
+              className="scrollbar-thin fixed top-0 right-0 h-[100dvh] w-[22rem] overflow-y-auto py-6"
+            />
+          </aside>
+        ) : null}
       </div>
     </div>
   )

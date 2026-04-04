@@ -1,0 +1,368 @@
+---
+title: Render与Commit
+category: react
+excerpt: React 中 render phase 与 commit phase 的职责边界、执行顺序、副作用时机，以及 React 18 与 React 19 下的工作流程。
+slug: react-render-and-commit-guide
+tags: [React 18, React 19, Render Phase, Commit Phase, Fiber]
+---
+
+{/* @format */}
+
+# React Render 与 Commit 工作流程指南
+
+在现代 React 中，理解渲染流程最重要的切入点，不是先记住某个 Hook 或某个优化 API，而是先分清 `render phase` 与 `commit phase` 的职责边界。很多开发中的现象，例如“组件已经执行了但 DOM 还没更新”“为什么 `useEffect` 里读到的是提交后的界面”“为什么并发渲染不等于页面被半更新”，本质上都与这两个阶段有关。
+
+本文聚焦 React 18 之后的现代工作流程，不回溯旧版本的历史实现，也不做源码逐行分析。目标是建立一套稳定的心智模型：一次更新如何进入调度，如何经过 `render phase` 计算下一次 UI，如何在 `commit phase` 中原子提交，以及 `useLayoutEffect` 与 `useEffect` 分别处在什么位置。React 19 会在这个模型上继续增强 Suspense、hydration 与渲染链路体验，但不会重写这两个阶段的基本分工。
+
+## Render 与 Commit 是什么
+
+可以先用一句话概括两者：
+
+- `render phase`：React 计算“下一次界面应该是什么样”的阶段。
+- `commit phase`：React 把已经确定的结果真正提交到宿主环境的阶段，例如浏览器 DOM。
+
+这两个阶段最容易被混淆的地方在于，“组件函数被调用”不等于“界面已经显示出来”。组件函数执行发生在 `render phase`，而 DOM 变更、ref 附着、布局相关副作用，则属于 `commit phase` 及其后的执行链路。
+
+下面这张表可以先建立整体边界：
+
+| 对比维度         | render phase       | commit phase                                             |
+| ---------------- | ------------------ | -------------------------------------------------------- |
+| 核心目标         | 计算下一次 UI      | 提交已确定的变更                                         |
+| 是否可中断       | 是                 | 否                                                       |
+| 是否直接修改 DOM | 否                 | 是                                                       |
+| 是否可能重复执行 | 是                 | 通常不会为同一结果重复提交                               |
+| 是否要求保持纯净 | 是                 | 否，允许执行提交相关副作用                               |
+| 与 Effect 的关系 | 不应在此执行副作用 | `useLayoutEffect` 更接近此阶段，`useEffect` 在提交后执行 |
+
+因此，`render` 更接近“计算”，`commit` 更接近“提交”。现代 React 的许多行为差异，都是由这两个词背后的时序与约束决定的。
+
+## Render Phase 做了什么
+
+`render phase` 的任务不是直接改页面，而是计算下一次提交所需的结果。在这一阶段，React 会执行受影响的组件，读取最新的 props 和 state，构建或复用工作树，并判断最终需要提交哪些变更。
+
+### 计算下一次 UI 结果
+
+当一次更新进入 React 之后，React 会从相应节点开始重新执行组件函数。这个“执行组件”的过程，本质上是在计算当前输入条件下组件应该返回什么 React 元素树。
+
+```tsx
+import { useState } from 'react'
+
+export function Counter() {
+  const [count, setCount] = useState(0)
+
+  console.log('render -> count:', count)
+
+  return <button onClick={() => setCount((c) => c + 1)}>{count}</button>
+}
+```
+
+点击按钮时，首先发生的是一次新的 `render`。此时 React 会重新执行 `Counter`，得到新的返回结果，再据此决定后续提交什么变更。
+
+### 构建 work-in-progress tree
+
+在内部实现上，React 不会直接修改当前已经显示给用户的树，而是基于当前树构建一棵新的工作树，即 `work-in-progress tree`。`render phase` 的主要工作正是围绕这棵工作树展开：
+
+- 复用可以复用的 Fiber 节点
+- 计算新的 props、state 与子节点结构
+- 比较新旧输出
+- 标记后续需要提交的变更
+
+这也是为什么 React 可以把“计算”和“提交”拆开。当前界面保持稳定，新的计算在另一棵工作树上完成，等到结果确定后再统一进入提交阶段。
+
+### render phase 可以中断、恢复、重试或丢弃
+
+React 18 之后，`render phase` 不再要求必须同步一口气完成。现代 React 可以根据任务优先级与主线程状态对渲染工作做更细粒度的调度：
+
+- 可以中断当前 render
+- 可以稍后恢复未完成的工作
+- 可以在更高优先级任务到来时重做一部分工作
+- 可以直接丢弃某次尚未提交的 render 结果
+
+这也是并发渲染成立的基础。并发渲染并不是指 DOM 会被分段、部分地提交给用户，而是指 React 在“计算下一次 UI”的阶段拥有更强的调度能力。
+
+### render phase 必须保持纯净
+
+由于 `render phase` 可能被重复执行、被中断或被放弃，所以组件函数和 Hook 本身必须尽量保持纯净。React 官方规则中明确要求组件与 Hooks 保持纯净，不应在 render 中执行具有外部可观察影响的逻辑。
+
+这意味着在 render 中不应做以下事情：
+
+- 直接操作 DOM
+- 注册订阅
+- 发起依赖副作用语义的请求
+- 修改外部可变对象并依赖“只执行一次”的假设
+
+错误示例：
+
+```tsx
+function BadExample() {
+  document.title = 'bad'
+  return <div>bad</div>
+}
+```
+
+更合理的写法是把副作用放到 Effect 中：
+
+```tsx
+import { useEffect } from 'react'
+
+function GoodExample() {
+  useEffect(() => {
+    document.title = 'good'
+  }, [])
+
+  return <div>good</div>
+}
+```
+
+### 对开发的直接影响
+
+如果对 `render phase` 的性质认识不清，就很容易产生误判。以下判断应当始终成立：
+
+- 组件执行了，不代表 DOM 已提交
+- 一次 render 发生过，不代表这次结果一定会 commit
+- render 中出现的代码，不应依赖“执行一次且立即可见”的旧直觉
+
+## Commit Phase 做了什么
+
+`commit phase` 负责把已经在 `render phase` 中准备好的结果真正提交出去。只有进入这一阶段，React 才会修改宿主环境，例如更新浏览器中的 DOM。
+
+### commit phase 的核心职责
+
+进入 `commit phase` 后，React 会做几类关键工作：
+
+- 把需要的宿主变更提交到 DOM
+- 更新 ref 的附着与清理
+- 执行布局同步相关逻辑
+- 安排被动副作用在后续时机执行
+
+可以把它理解为：`render phase` 负责算清楚“要改什么”，`commit phase` 负责一次性把这些变更落地。
+
+### commit phase 保持原子性
+
+与 `render phase` 不同，`commit phase` 的关键要求是原子性。也就是说，一旦开始提交，React 会把这次提交对应的变更完整落到宿主环境中，而不会让用户看到某个中间态。
+
+这也是现代 React 中一个非常重要的事实：
+
+- 并发渲染允许 render 过程被中断
+- 但 DOM 提交本身不会以“半棵树”的形式暴露给用户
+
+因此，开发者不应把“并发”理解成“页面会被拆开一半一半地更新”。可中断的是计算过程，不是最终提交结果。
+
+### commit phase 的常见子阶段
+
+如果从更精细的角度理解，`commit phase` 可以按职责拆成几个子阶段：
+
+#### before mutation
+
+这个阶段发生在真实 DOM 变更之前。React 会为后续提交做准备，并处理提交前需要观察的部分信息。
+
+#### mutation
+
+这是宿主环境真正发生变化的阶段。对浏览器来说，新增、删除、重排、文本更新等 DOM 相关操作会集中发生在这里。
+
+#### layout
+
+在 DOM 已经完成本轮提交之后，React 会处理 ref 附着与布局同步相关逻辑。`useLayoutEffect` 的执行时机更接近这一阶段，因此它适合读取布局、测量尺寸、在浏览器绘制前做同步修正。
+
+需要特别区分的是：`useEffect` 并不属于与布局同步的提交子阶段。它是提交完成后的被动副作用，会在更靠后的时机执行。
+
+## 一次更新如何从 Render 走到 Commit
+
+如果把一次普通的状态更新顺序化，可以概括为下面这条链路：
+
+1. 某个更新被触发，例如事件处理函数中的 `setState`
+2. React 接收更新并进入调度系统
+3. React 启动 `render phase`
+4. React 执行相关组件，构建新的 `work-in-progress tree`
+5. React 比较新旧结果，并收集本轮需要提交的变更
+6. 如果 render 成功完成，则进入 `commit phase`
+7. React 原子提交 DOM、ref 与布局相关变更
+8. 浏览器完成绘制
+9. React 在后续时机执行被动副作用，例如 `useEffect`
+
+下面这个最小示例可以帮助理解日志顺序：
+
+```tsx
+import { useEffect, useLayoutEffect, useState } from 'react'
+
+export function PhaseDemo() {
+  const [count, setCount] = useState(0)
+
+  console.log('render', count)
+
+  useLayoutEffect(() => {
+    console.log('layout effect', count)
+  }, [count])
+
+  useEffect(() => {
+    console.log('effect', count)
+  }, [count])
+
+  return <button onClick={() => setCount((c) => c + 1)}>{count}</button>
+}
+```
+
+在概念上，可以把一次点击后的执行顺序理解为：
+
+```text
+setState
+  -> 调度
+  -> render phase：组件函数重新执行
+  -> commit phase：DOM 提交
+  -> layout effect：同步读取布局或做布局修正
+  -> 浏览器绘制
+  -> effect：执行被动副作用
+```
+
+在具体实现中，浏览器绘制与被动副作用调度存在实现层面的细节差异，但作为工程心智模型，上述顺序足以指导大多数开发判断。
+
+## useEffect 与 useLayoutEffect 在流程中的位置
+
+很多开发问题并不是真的出在“React 为什么又渲染了一次”，而是出在没有分清 `useEffect` 与 `useLayoutEffect` 的时机差异。
+
+### useLayoutEffect：更接近同步提交链路
+
+`useLayoutEffect` 会在 DOM 提交之后、浏览器重绘之前执行。它的典型用途是：
+
+- 读取最新布局
+- 测量元素尺寸
+- 在用户看到界面前做一次同步修正
+
+```tsx
+import { useLayoutEffect, useRef, useState } from 'react'
+
+function Tooltip() {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [height, setHeight] = useState(0)
+
+  useLayoutEffect(() => {
+    if (ref.current) {
+      setHeight(ref.current.getBoundingClientRect().height)
+    }
+  }, [])
+
+  return <div ref={ref}>tooltip height: {height}</div>
+}
+```
+
+这类代码之所以适合放在 `useLayoutEffect` 中，是因为它依赖“DOM 已经更新，但浏览器还未把错误位置绘制给用户”的窗口期。
+
+需要注意的是，`useLayoutEffect` 会阻塞浏览器重绘。它适合解决布局同步问题，但不应滥用。
+
+### useEffect：提交之后的被动副作用
+
+`useEffect` 更适合处理不要求阻塞绘制的副作用，例如：
+
+- 数据请求
+- 事件订阅
+- 日志上报
+- 与第三方系统同步
+
+```tsx
+import { useEffect } from 'react'
+
+function Page() {
+  useEffect(() => {
+    const connection = createConnection()
+    connection.connect()
+
+    return () => {
+      connection.disconnect()
+    }
+  }, [])
+
+  return <div>page</div>
+}
+```
+
+如果某段逻辑只是“在界面已经提交后与外部系统同步”，那么默认应优先考虑 `useEffect`，而不是 `useLayoutEffect`。
+
+### 选择原则
+
+- 需要阻塞绘制并读取布局：使用 `useLayoutEffect`
+- 普通副作用同步：使用 `useEffect`
+- 能不放到 Effect 的逻辑，不要强行放进 Effect
+
+## React 18 与 React 19 下的关系
+
+React 18 是现代 `render / commit` 心智模型的正式基线。自这一版本起，`createRoot`、并发渲染、自动批处理、transition、Suspense 与流式 SSR 被统一到同一套现代渲染体系中。
+
+React 19 并没有重新定义 `render phase` 与 `commit phase` 的基本分工。它的重点是沿着 React 18 已经建立的现代渲染链路继续增强，包括：
+
+- 更完整地把数据读取与 Suspense 接入渲染期语义，例如 `use`
+- 持续改进 Suspense 与 hydration 的表现与诊断体验
+- 扩展静态预渲染与服务端渲染相关 API
+
+因此，如果从工作流程的角度概括两者关系，可以得到一个很重要的结论：
+
+- React 18 是现代渲染模型的起点
+- React 19 是在这套模型上的增强，而不是第二次底层阶段重构
+
+对于应用开发者而言，真正需要稳定掌握的是：  
+哪些逻辑发生在 render，哪些逻辑发生在 commit，哪些逻辑又发生在 commit 之后。
+
+## 常见误区
+
+### render 不等于 DOM 已更新
+
+组件函数重新执行，只说明 React 正在计算新的 UI。只有进入 `commit phase`，宿主环境才会真正发生变化。
+
+### 组件执行了，不代表这次结果一定会提交
+
+在现代 React 中，一次 render 结果可能被中断、重试或丢弃。尤其在并发渲染场景下，“执行过一次组件”并不是“这次界面一定显示出来”的保证。
+
+### 并发渲染不等于 DOM 会被部分提交
+
+可中断的是 `render phase`，不是最终的 DOM 提交。提交阶段仍然保持原子性。
+
+### useEffect 不是提交前执行
+
+`useEffect` 是提交后的被动副作用机制。涉及布局读取、同步测量、阻塞绘制的逻辑，不能用它替代 `useLayoutEffect`。
+
+### useLayoutEffect 不是更高级的 useEffect
+
+`useLayoutEffect` 的价值在于时机更靠前，而不是“更强大”或“默认更好”。如果逻辑不依赖绘制前窗口期，就不应为了“更早执行”而使用它。
+
+### React 19 不是新的 render / commit 时代
+
+React 19 增强的是现代渲染链路上的能力与体验，而不是把 `render phase` 和 `commit phase` 换成另一套全新模型。
+
+## 对开发与性能分析的意义
+
+理解 `render / commit` 的边界，不只是为了答概念题，更直接影响工程判断。
+
+### 排查“为什么组件执行了但页面没更新”
+
+这类问题首先要判断当前现象发生在哪个阶段。如果只看到 render 日志，而没有看到 DOM 变化，可能说明：
+
+- 当前仍处于 render 计算阶段
+- 这次 render 结果尚未 commit
+- 这次 render 结果被新的高优先级更新打断或替换
+
+### 排查闪烁和布局跳动
+
+如果某段逻辑需要测量尺寸、同步定位或立即修正视觉结果，应重点检查是否错误地使用了 `useEffect`，导致逻辑落到了浏览器绘制之后才执行。
+
+### 分析性能问题
+
+性能分析不应只笼统地说“React 渲染慢”，而应拆成至少三个层次：
+
+- `render` 成本：组件执行、计算与比较是否过重
+- `commit` 成本：DOM 变更是否过大、过频繁
+- effect 成本：提交后的同步或异步副作用是否过重
+
+只有把问题映射回正确阶段，优化手段才会准确。
+
+## 文末速查
+
+| 概念                        | 一句话定义                                                            |
+| --------------------------- | --------------------------------------------------------------------- |
+| `render phase`              | React 计算下一次 UI 的阶段，可中断、可重试、不可直接写副作用          |
+| `commit phase`              | React 提交已确定变更的阶段，不可中断，并保持原子性                    |
+| `useLayoutEffect`           | DOM 提交后、浏览器重绘前执行的同步布局副作用                          |
+| `useEffect`                 | 提交之后执行的被动副作用                                              |
+| React 18 与 React 19 的关系 | 18 建立现代渲染模型，19 在其上增强，不改写 render / commit 的基本分工 |
+
+如果只保留一个判断标准，可以记住下面这句话：
+
+> `render` 负责计算，`commit` 负责提交；组件执行、DOM 更新与副作用执行，处在不同阶段。

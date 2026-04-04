@@ -53,8 +53,8 @@ export function TableOfContents({ headings, className }: TableOfContentsProps) {
 
   return (
     <nav className={className}>
-      <p className="text-sm font-semibold">On This Page</p>
-      <div className="mt-4 flex flex-col gap-1">
+      <p className="pr-4 pl-6 text-sm font-semibold">On This Page</p>
+      <div className="mt-4 flex flex-col gap-1 pr-4 pl-6">
         {headings.map((heading) => (
           <Link
             key={heading.id}

@@ -1,0 +1,296 @@
+---
+title: Server Actions
+category: nextjs
+excerpt: 围绕 use server、表单 action、客户端调用、错误返回、乐观更新与重验证，系统讲清 Next.js App Router 中 Server Actions 的数据更新主线。
+slug: nextjs-server-actions
+tags: [Next.js, Server Actions, use server, Forms, Revalidation]
+---
+
+{/* @format */}
+
+# Next.js Server Actions
+
+在 App Router 中，数据读取和数据更新不再必须通过两套完全割裂的方案完成。Server Actions 把“表单提交、数据写入、缓存更新和 UI 刷新”重新串成了一条更短的链路，使很多常见业务场景不必再人为拆成“前端提交 + 独立 API + 手动刷新”。
+
+这篇文章聚焦现代 Next.js 的数据更新主线。目标不是把所有细节讲成协议文档，而是建立一个稳定判断框架：什么时候适合 Server Actions，如何定义 `'use server'`，如何在表单和客户端组件中调用，数据写入后如何与缓存、错误和用户反馈衔接。
+
+官方文档主线参考：
+
+- [Updating Data](https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations)
+- [use server](https://nextjs.org/docs/app/api-reference/directives/use-server)
+- [Error Handling](https://nextjs.org/docs/app/getting-started/error-handling)
+
+## 先建立一个核心认知
+
+Server Actions 的主线可以概括为：
+
+- 用 `'use server'` 标记服务端函数
+- 通过表单 `action`、`formAction` 或客户端调用触发
+- 在服务端执行写操作
+- 写完后通过 `revalidatePath` / `revalidateTag` / `updateTag` 更新缓存
+
+因此，它解决的不是“怎么发请求”，而是“怎么把变更操作自然放回服务端渲染链路”。
+
+## use server
+
+一句话定义：`'use server'` 是把一个异步函数或整个文件标记为服务端函数入口的指令。
+
+它解决什么问题：React 和 Next.js 需要明确知道哪些函数允许通过框架机制从客户端触发并在服务端执行。
+
+什么时候用：
+
+- 创建表单提交函数
+- 封装服务端写操作
+- 在服务端组件中内联简单 action
+
+```ts
+export async function createPost(formData: FormData) {
+  'use server'
+
+  const title = formData.get('title')
+  // write data
+}
+```
+
+常见注意点：Server Action 必须是异步函数，而且应只承载真正属于服务端的数据变更逻辑。来源：[use server](https://nextjs.org/docs/app/api-reference/directives/use-server)
+
+## 表单 action
+
+一句话定义：在 App Router 中，可以直接把 Server Action 传给 `<form action={...}>`，让表单提交走框架原生链路。
+
+它解决什么问题：很多写操作本质上就是表单提交，Server Action 让这类场景不必先手动写客户端事件处理，再自己请求接口。
+
+什么时候用：
+
+- 创建、编辑、删除表单
+- 搜索筛选提交
+- 用户设置保存
+
+```tsx
+import { createPost } from './actions'
+
+export function PostForm() {
+  return (
+    <form action={createPost}>
+      <input name="title" />
+      <button type="submit">Create</button>
+    </form>
+  )
+}
+```
+
+常见注意点：表单是 Server Actions 最自然的主线入口。能用表单表达的数据更新，不必优先退回手写 `onSubmit + fetch`。来源：[Updating Data](https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations)
+
+## 在 Server Components 中定义 Action
+
+一句话定义：Server Components 可以内联定义 Server Action，并直接把它传给表单。
+
+它解决什么问题：某些 action 只服务于当前页面或当前段落，内联定义能让读写逻辑就近组织。
+
+```tsx
+export default function Page() {
+  async function createPost(formData: FormData) {
+    'use server'
+    // write data
+  }
+
+  return <form action={createPost}>{/* ... */}</form>
+}
+```
+
+常见注意点：当 action 会被多个组件复用，或者需要被客户端组件导入时，应优先抽到独立的 `'use server'` 文件中。
+
+## 在 Client Components 中调用 Action
+
+一句话定义：客户端组件不能定义 Server Action，但可以导入服务端文件中的 Action 并触发它。
+
+它解决什么问题：很多交互控件本身必须是客户端组件，但实际数据写入仍应发生在服务端。
+
+什么时候用：
+
+- 客户端表单组件
+- 需要本地状态和交互反馈的提交按钮
+- 结合 `useTransition`、`useOptimistic` 的交互
+
+```tsx
+'use client'
+
+import { createPost } from '@/app/actions'
+
+export function SubmitButton() {
+  return <button formAction={createPost}>Create</button>
+}
+```
+
+常见注意点：客户端组件可以调用，但不要因此误以为逻辑已经“客户端化”。真正的写操作仍然运行在服务端。
+
+## 传 Action 作为 Props
+
+一句话定义：服务端组件可以把 Server Action 作为 prop 传给客户端组件，由客户端组件把它挂到 `action` 或 `formAction` 上。
+
+它解决什么问题：这样既能保持页面主体在服务端，又能让局部客户端组件承载交互 UI。
+
+```tsx
+import { EditForm } from './edit-form'
+
+export default function Page() {
+  async function updatePost(formData: FormData) {
+    'use server'
+    // update
+  }
+
+  return <EditForm action={updatePost} />
+}
+```
+
+常见注意点：跨边界传递的不是普通任意函数，而是框架认可的 Server Action。
+
+## 错误返回与表单校验
+
+一句话定义：对于预期内的业务错误，例如校验失败、权限不足或写入失败，应显式返回可处理结果，而不是一律抛异常。
+
+它解决什么问题：业务错误不是系统崩溃，应该成为正常 UI 流程的一部分。
+
+什么时候用：
+
+- 表单字段校验失败
+- 用户可修正的数据错误
+- 第三方接口返回可预期失败
+
+```ts
+export async function createPost(formData: FormData) {
+  'use server'
+
+  const title = formData.get('title')?.toString().trim()
+
+  if (!title) {
+    return { message: '标题不能为空' }
+  }
+
+  // write data
+  return { message: '' }
+}
+```
+
+常见注意点：当前官方错误处理文档明确区分了 expected errors 和 uncaught exceptions。Server Actions 中的表单校验通常属于前者。来源：[Error Handling](https://nextjs.org/docs/app/getting-started/error-handling)
+
+## 重验证
+
+一句话定义：Server Action 完成写操作后，通常需要显式触发缓存重验证，以让相关页面读取到新数据。
+
+它解决什么问题：App Router 的读取链路可能经过缓存层，如果写完不重验证，用户看到的可能仍是旧结果。
+
+什么时候用：
+
+- 新建内容后刷新列表
+- 更新资料后刷新详情页
+- 修改共享资源后刷新多个页面
+
+```ts
+'use server'
+
+import { revalidatePath } from 'next/cache'
+
+export async function createPost(formData: FormData) {
+  // write data
+  revalidatePath('/posts')
+}
+```
+
+常见注意点：重验证不是可选配饰，而是 Server Actions 成为“完整更新链路”的关键一环。
+
+## 重定向
+
+一句话定义：Server Action 执行完成后，可以通过 `redirect()` 让用户进入新的页面路径。
+
+它解决什么问题：很多变更场景都需要写完即跳转，例如创建成功后进入详情页。
+
+```ts
+'use server'
+
+import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
+
+export async function createPost(formData: FormData) {
+  // write data
+  revalidatePath('/posts')
+  redirect('/posts')
+}
+```
+
+常见注意点：`redirect()` 会中断后续执行，因此重验证等必要逻辑应放在它之前。
+
+## 乐观更新
+
+一句话定义：乐观更新是在服务端确认结果返回前，先在客户端临时更新 UI，以获得更快的交互反馈。
+
+它解决什么问题：某些提交操作虽然服务端很快，但用户仍会感知等待。乐观更新可以让界面更像“即时响应”。
+
+什么时候用：
+
+- 点赞、收藏、切换状态
+- 列表追加
+- 轻量编辑操作
+
+```tsx
+'use client'
+
+import { useOptimistic } from 'react'
+
+export function TodoList({ items }: { items: string[] }) {
+  const [optimisticItems, addOptimisticItem] = useOptimistic(
+    items,
+    (state, newItem: string) => [...state, newItem],
+  )
+
+  return <ul>{optimisticItems.map((item) => <li key={item}>{item}</li>)}</ul>
+}
+```
+
+常见注意点：乐观更新适合短平快交互，不适合高冲突、失败代价大的操作。
+
+## 一个更稳的 Action 设计顺序
+
+在真实项目里，更稳定的做法通常是：
+
+- 能用表单 action 就优先用表单
+- Action 中只保留校验、写入和缓存更新这类服务端职责
+- 预期业务错误显式返回
+- 写完后根据影响范围选择 `revalidatePath` 或 tag 方案
+- 需要更流畅反馈时，再给客户端组件补 `useTransition` 或乐观更新
+
+这条顺序的重点，是让 Server Actions 回到“服务端变更入口”的位置，而不是让它变成新的万能函数容器。
+
+## 常见误区
+
+### 误区一：Server Actions 只是另一种 API Route
+
+不准确。它们的调用方式、渲染整合能力和缓存协作方式都不同。
+
+### 误区二：任何客户端事件都应该改成 Server Action
+
+不准确。Server Actions 更适合数据写入主线，不适合所有客户端副作用。
+
+### 误区三：写完数据后页面会自动全局刷新
+
+不准确。是否能看到最新数据，仍然取决于你是否正确做了重验证。
+
+### 误区四：表单校验失败应该直接抛异常
+
+业务可预期失败应优先作为 expected error 处理，而不是混入真正异常边界。
+
+## 文末速查
+
+| 场景 | 优先想到的能力 |
+| --- | --- |
+| 服务端定义写操作入口 | `'use server'` |
+| 标准表单提交 | `<form action={action}>` |
+| 客户端按钮触发服务端写操作 | `formAction` 或导入 Action |
+| 表单校验失败反馈 | 显式返回 expected error |
+| 更新后刷新页面数据 | `revalidatePath` / `revalidateTag` / `updateTag` |
+| 写完后跳转 | `redirect()` |
+| 提升提交即时反馈 | 乐观更新 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Server Actions 的价值，不在于“少写一个接口文件”，而在于把数据写入、缓存更新和 UI 刷新重新串回同一条框架主线。

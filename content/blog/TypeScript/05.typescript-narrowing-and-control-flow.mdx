@@ -1,0 +1,337 @@
+---
+title: 类型收窄与控制流
+category: ts
+excerpt: 从 typeof、instanceof、in、判空、自定义类型守卫到判别联合，系统讲清 TypeScript 如何在运行时判断基础上收窄静态类型。
+slug: typescript-narrowing-and-control-flow
+tags: [TypeScript, Narrowing, Type Guards, Discriminated Union]
+---
+
+{/* @format */}
+
+# TypeScript 类型收窄与控制流分析
+
+联合类型让一个值可以有多种可能，但真正让 TypeScript 在业务开发里可用的，不只是“允许多种候选类型”，而是它能随着代码分支不断缩小类型范围。这套能力背后的关键就是类型收窄与控制流分析。
+
+如果没有收窄，联合类型几乎无法落地。因为 `string | number` 这样的值，在没有进一步判断之前，你既不能安全调用字符串方法，也不能直接当数字参与运算。TypeScript 的做法不是要求你处处手动断言，而是根据运行时判断语句，逐步推导出当前分支下更精确的静态类型。
+
+官方文档主线参考：
+
+- [Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## 先建立一个核心认知
+
+一句话概括：类型收窄是 TypeScript 根据代码中的条件判断，把某个值从宽泛候选类型缩小为更精确类型的过程。
+
+它解决什么问题：
+
+- 让联合类型真正可用
+- 让运行时判断与静态类型系统形成联动
+- 降低无意义断言和 `any` 的使用
+
+控制流分析则更进一步。TypeScript 并不是只看某一行判断，而是会结合 `if`、`return`、`throw`、三元表达式、`switch` 等流程结构，推断一个变量在不同路径上的类型变化。
+
+## 为什么收窄是类型系统的关键能力
+
+看一个简单例子：
+
+```ts
+function printValue(value: string | number) {
+  return value.toUpperCase()
+}
+```
+
+这里会直接报错，因为 `number` 没有 `toUpperCase`。如果要让这段代码成立，你必须先把类型范围缩小：
+
+```ts
+function printValue(value: string | number) {
+  if (typeof value === 'string') {
+    return value.toUpperCase()
+  }
+
+  return value.toFixed(2)
+}
+```
+
+这正是收窄的意义：先根据运行时判断确认值的形态，再在该分支内安全使用对应能力。
+
+## typeof 收窄
+
+一句话定义：`typeof` 是最常见的基础类型守卫，用于区分字符串、数字、布尔值、函数、对象等 JavaScript 原始运行时类型标签。
+
+它解决什么问题：当一个值可能是多个基础类型之一时，`typeof` 是最直接的收窄手段。
+
+什么时候用：
+
+- `string | number`
+- `string | undefined`
+- 函数参数接收多个基础类型
+- 对外部输入做第一层判定
+
+```ts
+function formatPrice(value: string | number) {
+  if (typeof value === 'number') {
+    return `¥${value.toFixed(2)}`
+  }
+
+  return value.trim()
+}
+```
+
+常见注意点：`typeof null` 的结果是 `'object'`，这不是 TypeScript 特性，而是 JavaScript 运行时历史行为。因此涉及判空时，不能只依赖 `typeof value === 'object'`。来源：[Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## instanceof 收窄
+
+一句话定义：`instanceof` 用于判断一个值是否来自某个构造函数或类的实例链。
+
+它解决什么问题：当联合类型中包含类实例或内建对象时，`instanceof` 可以把分支类型缩小到具体实例类型。
+
+什么时候用：
+
+- `Date | string`
+- 自定义错误类
+- 浏览器原生对象，如 `Error`、`URL`、`Map`
+
+```ts
+function formatDate(value: Date | string) {
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  return new Date(value).toISOString()
+}
+```
+
+常见注意点：`instanceof` 依赖原型链，不适合区分普通对象字面量的结构差异。对于接口类型和对象结构，更常见的是 `in` 或判别字段。来源：[Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## in 收窄
+
+一句话定义：`in` 用于判断某个属性是否存在于对象中，并据此缩小对象联合类型。
+
+它解决什么问题：很多业务对象不是靠类区分，而是靠字段结构区分。`in` 可以把“结构差异”转成可被类型系统识别的判断。
+
+什么时候用：
+
+- 不同响应对象有不同字段
+- 前端组件接收多种对象配置
+- 联合类型靠字段存在性区分
+
+```ts
+type User = { id: string; name: string }
+type ApiError = { message: string; code: number }
+
+function getMessage(value: User | ApiError) {
+  if ('message' in value) {
+    return value.message
+  }
+
+  return value.name
+}
+```
+
+常见注意点：`in` 判断的是属性存在性，不等于属性值一定可用。某个属性即使值为 `undefined`，只要键存在，`in` 依然可能返回真。因此在可选属性场景下，需要进一步结合具体值判断。来源：[Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## 判空与 truthiness 收窄
+
+一句话定义：TypeScript 会根据判空和 truthy / falsy 判断，缩小 `null`、`undefined` 或空值相关的联合类型。
+
+它解决什么问题：大量真实业务错误并不来自复杂泛型，而是来自“这里可能为空”。判空收窄能让这类问题在进入运行时之前暴露出来。
+
+什么时候用：
+
+- 接口返回值可能为空
+- DOM 查询结果可能不存在
+- 组件 props、表单字段或 URL 参数可选
+
+```ts
+function printLength(value: string | null) {
+  if (!value) {
+    return 0
+  }
+
+  return value.length
+}
+```
+
+常见注意点：truthiness 判断会把 `''`、`0`、`false` 也视为假值，因此它适合“只关心是否存在可用值”的场景，但不总是适合精确业务判断。比如数字 `0` 在很多业务里是合法输入，这时更稳妥的写法是 `value == null` 或 `value !== undefined`。来源：[Truthiness Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## 相等判断收窄
+
+一句话定义：通过 `===`、`!==`、`== null` 等比较表达式，TypeScript 也可以进一步缩小类型范围。
+
+它解决什么问题：有些收窄不是基于类型标签，而是基于具体值。例如状态字段、枚举值、可选参数是否为空。
+
+```ts
+function normalize(input: string | null | undefined) {
+  if (input == null) {
+    return ''
+  }
+
+  return input.trim()
+}
+```
+
+常见注意点：`== null` 在 TypeScript 收窄语境下是一个有价值的写法，因为它能同时排除 `null` 和 `undefined`。但这不意味着应该在所有业务判断里滥用宽松相等，语义要保持明确。
+
+## 自定义类型守卫
+
+一句话定义：自定义类型守卫是返回布尔值并使用 `value is SomeType` 作为返回类型的函数，用于把一段通用判断逻辑升级为可复用的类型收窄工具。
+
+它解决什么问题：当某个判断逻辑会在多个地方重复出现时，与其反复写断言，不如把它封装成类型守卫。
+
+什么时候用：
+
+- 接口响应需要统一判定
+- 运行时输入需要进入类型安全分支
+- 工具函数需要对外暴露明确的类型过滤能力
+
+```ts
+type Product = {
+  id: string
+  title: string
+}
+
+function isProduct(value: unknown): value is Product {
+  return typeof value === 'object' && value !== null && 'id' in value && 'title' in value
+}
+
+function printProduct(value: unknown) {
+  if (!isProduct(value)) {
+    return 'invalid product'
+  }
+
+  return value.title
+}
+```
+
+常见注意点：类型守卫的返回类型会影响编译器判断，但不会自动保证你的运行时判断足够严谨。换句话说，`value is Product` 只是对 TypeScript 的承诺，守卫函数本身必须真的做好校验。来源：[Using Type Predicates](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## 判别联合
+
+一句话定义：判别联合是让联合类型中的每个成员都带上同一个可区分字段，再通过该字段完成稳定收窄的一种建模方式。
+
+它解决什么问题：复杂业务状态如果只靠零散字段收窄，很快会失控；判别联合能把状态机式数据结构建模得更清晰、更可维护。
+
+什么时候用：
+
+- 请求状态
+- 表单提交流程
+- 组件模式切换
+- 不同业务事件建模
+
+```ts
+type RequestState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: string[] }
+  | { status: 'error'; message: string }
+
+function renderState(state: RequestState) {
+  switch (state.status) {
+    case 'idle':
+      return '准备开始'
+    case 'loading':
+      return '加载中'
+    case 'success':
+      return state.data.join(', ')
+    case 'error':
+      return state.message
+  }
+}
+```
+
+常见注意点：判别字段必须稳定且唯一，通常选择 `type`、`kind`、`status` 这类语义明确的字段。不要让多个成员共享相同判别值，否则会破坏收窄效果。来源：[Discriminated Unions](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## 控制流分析
+
+一句话定义：控制流分析是 TypeScript 根据程序执行路径变化，动态追踪变量类型的一套分析机制。
+
+它解决什么问题：类型变化并不只发生在一个 `if` 内。函数中的 `return`、提前退出、异常分支、循环与变量重新赋值都会影响某个值在后续路径上的可用类型。
+
+```ts
+function toUpper(value: string | undefined) {
+  if (!value) {
+    return ''
+  }
+
+  return value.toUpperCase()
+}
+```
+
+这里 `return ''` 之后，后续路径里 `value` 会被视为 `string`，因为 `undefined` 分支已经提前退出。这个过程不是简单的语法替换，而是控制流分析在起作用。
+
+常见注意点：一旦变量在后续被重新赋值，TypeScript 可能重新评估它的类型范围。因此越是复杂的多次变更变量，越容易削弱收窄效果。真实项目里，保持变量意义稳定，往往比“写出聪明的分支”更重要。
+
+## 穷尽检查
+
+一句话定义：穷尽检查是在判别联合的所有分支都处理完成后，用 `never` 确认没有遗漏成员的一种写法。
+
+它解决什么问题：当联合类型后续新增成员时，旧的 `switch` 逻辑往往会漏掉分支，穷尽检查可以把这种遗漏变成编译期错误。
+
+```ts
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${value}`)
+}
+
+function renderState(state: RequestState) {
+  switch (state.status) {
+    case 'idle':
+      return '准备开始'
+    case 'loading':
+      return '加载中'
+    case 'success':
+      return state.data.join(', ')
+    case 'error':
+      return state.message
+    default:
+      return assertNever(state)
+  }
+}
+```
+
+常见注意点：穷尽检查不是语法炫技，而是对复杂业务状态建模非常有价值的稳定器，尤其适合请求流程、表单状态机和消息协议。
+
+## 真实项目中的判断顺序
+
+把收窄和控制流分析放到工程里，更稳的使用顺序通常是：
+
+- 对外部未知输入先用 `unknown`
+- 再用 `typeof`、`instanceof`、`in` 或判空做第一层筛选
+- 对复杂业务对象优先设计判别联合
+- 重复出现的结构判断抽成自定义类型守卫
+- 在关键 `switch` 逻辑里做穷尽检查
+
+这条主线的重点不是“会写几种判断语法”，而是让运行时判断和静态类型设计相互配合。
+
+## 常见误区
+
+### 误区一：联合类型报错时先用类型断言解决
+
+这通常只是绕过问题，而不是解决问题。更合理的做法是先问自己：这里是否缺少一次必要收窄。
+
+### 误区二：truthiness 判断总是最方便也最准确
+
+它很方便，但并不总是精确，特别是在 `0`、空字符串和 `false` 都可能是合法值的场景。
+
+### 误区三：自定义类型守卫只要返回 `value is T` 就安全
+
+不准确。守卫函数只是把运行时判断结果告诉编译器，判断本身必须足够严谨。
+
+### 误区四：判别联合只是状态字段加几个字符串
+
+真正的价值不在字段名，而在于它把复杂分支逻辑变成了可穷尽、可维护的结构化类型设计。
+
+## 文末速查
+
+| 场景                      | 优先想到的收窄方式 |
+| ------------------------- | ------------------ |
+| 区分基础类型              | `typeof`           |
+| 区分类实例或内建对象      | `instanceof`       |
+| 依据对象字段区分联合类型  | `in`               |
+| 排除 `null` / `undefined` | 判空或相等判断     |
+| 抽复用的结构判断逻辑      | 自定义类型守卫     |
+| 建模稳定业务状态          | 判别联合           |
+| 防止分支遗漏              | `never` 穷尽检查   |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> TypeScript 的类型收窄并不是附属能力，而是让联合类型、业务状态和运行时判断真正协同工作的核心机制。

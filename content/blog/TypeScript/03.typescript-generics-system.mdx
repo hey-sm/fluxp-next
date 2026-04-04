@@ -1,0 +1,260 @@
+---
+title: 泛型
+category: ts
+excerpt: 从泛型函数、泛型接口、约束、默认泛型到真实项目中的接口设计，系统讲清 TypeScript 泛型如何提升抽象能力而不丢失类型信息。
+slug: typescript-generics-system
+tags: [TypeScript, Generics, Generic Constraints, Type Inference]
+---
+
+{/* @format */}
+
+# TypeScript 泛型体系
+
+TypeScript 真正和普通类型标注拉开差距的地方，不是能写出 `string`、`number` 或接口，而是它允许你描述“与具体类型无关、但依然保持类型关系不丢失”的抽象能力。这就是泛型的核心价值。
+
+泛型不是高级技巧秀场，而是一套帮助你设计可复用 API 的主线工具。没有泛型，你要么把函数写死成只支持某一种类型，要么退回到 `any`，两者都不利于可复用和类型安全。泛型让你可以在“抽象能力”和“具体类型信息”之间同时保留两者。
+
+官方文档主线参考：
+
+- [Generics](https://www.typescriptlang.org/docs/handbook/2/generics.html)
+
+## 泛型到底解决什么问题
+
+先看一个没有泛型的例子：
+
+```ts
+function identity(arg: any): any {
+  return arg
+}
+```
+
+这段代码看起来很灵活，但类型信息完全丢了。传入字符串，返回值还是 `any`；传入对象，返回值也还是 `any`。调用方无法知道“输入和输出之间其实是同一个类型”。
+
+泛型的核心就是把这种关系显式保留下来：
+
+```ts
+function identity<T>(arg: T): T {
+  return arg
+}
+```
+
+现在编译器知道：
+
+- 传进来的是什么类型
+- 返回出来的就还是那个类型
+
+这就是泛型的本质：**在不提前写死具体类型的情况下，保留类型之间的关系。**
+
+## 泛型函数
+
+一句话定义：泛型函数是把类型参数作为函数参数体系的一部分引入的函数。
+
+它解决什么问题：当函数逻辑对多种类型都适用，但输入输出之间有稳定关系时，泛型函数能避免类型丢失。
+
+什么时候用：
+
+- 包装函数
+- 列表转换工具
+- 请求函数
+- 组件与业务工具中的通用逻辑
+
+```ts
+function first<T>(list: T[]): T | undefined {
+  return list[0]
+}
+
+const name = first(['Ada', 'Linus'])
+// 推导为 string | undefined
+```
+
+常见注意点：泛型不是为了让函数“看起来高级”，而是为了表达“这里的类型由调用方输入决定，并且在输出中延续”。来源：[Generics](https://www.typescriptlang.org/docs/handbook/2/generics.html)
+
+## 类型参数推导
+
+大多数时候，调用泛型函数不需要显式写出类型参数，因为编译器可以根据参数自动推导。
+
+```ts
+function wrap<T>(value: T) {
+  return { value }
+}
+
+const result = wrap('hello')
+// T 被推导为 string
+```
+
+这意味着现代 TypeScript 泛型使用的最佳状态通常是：
+
+- 定义时清晰
+- 调用时尽量自然
+
+只有在推导不足或需要显式指定时，才手动写 `<T>`。
+
+## 泛型接口
+
+一句话定义：泛型接口是把类型参数提升到接口层级，让整个结构围绕某个类型变量工作。
+
+它解决什么问题：当一个对象、函数签名或数据容器本身都依赖某个类型变量时，泛型接口能把这种依赖提升成结构契约。
+
+什么时候用：
+
+- 通用分页结果
+- 通用请求响应
+- 数据容器接口
+
+```ts
+interface ApiResponse<T> {
+  data: T
+  code: number
+  message: string
+}
+
+type User = { id: string; name: string }
+
+const response: ApiResponse<User> = {
+  data: { id: '1', name: 'Ada' },
+  code: 0,
+  message: 'ok',
+}
+```
+
+常见注意点：当多个成员都围绕同一个类型变量工作时，把泛型参数放在接口层级通常比放在单个成员上更自然。来源：[Generics](https://www.typescriptlang.org/docs/handbook/2/generics.html)
+
+## 泛型约束
+
+一句话定义：泛型约束用来限制类型参数必须满足某些结构条件。
+
+它解决什么问题：泛型越灵活，越容易“什么都能传”，但很多逻辑其实需要最小结构前提，例如必须有 `length`、必须有 `id`。
+
+什么时候用：
+
+- 泛型函数需要访问某些属性
+- 只接受满足特定形状的输入
+
+```ts
+interface HasLength {
+  length: number
+}
+
+function logLength<T extends HasLength>(value: T): T {
+  console.log(value.length)
+  return value
+}
+```
+
+常见注意点：约束的目的不是让泛型变复杂，而是让抽象更精确。能明确写出最小要求时，泛型 API 会更稳定。来源：[Generic Constraints](https://www.typescriptlang.org/docs/handbook/2/generics.html)
+
+## keyof 与泛型约束结合
+
+这是项目中非常高频的模式。
+
+```ts
+function getProp<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key]
+}
+
+const user = { id: '1', name: 'Ada' }
+
+const name = getProp(user, 'name')
+```
+
+这里表达了一个非常重要的关系：
+
+- 第二个参数必须是第一个参数对象的合法 key
+- 返回值类型取决于这个 key 对应的属性类型
+
+这类模式是 TypeScript 泛型真正开始体现设计力的起点。
+
+## 默认泛型参数
+
+一句话定义：默认泛型参数允许你在没有显式传入类型参数时，为泛型提供默认值。
+
+它解决什么问题：某些泛型接口经常以同一个默认类型使用，但又保留让调用方覆写的能力。
+
+```ts
+type Result<T = string> = {
+  value: T
+  ok: boolean
+}
+
+const result: Result = {
+  value: 'done',
+  ok: true,
+}
+```
+
+常见注意点：默认泛型适合降低使用门槛，但不应掩盖一个本应由调用方明确指定的关键类型参数。
+
+## 泛型在真实项目中的价值
+
+在业务开发里，泛型最常见的价值通常不是算法题，而是接口设计。
+
+### 通用请求结果
+
+```ts
+interface ApiListResponse<T> {
+  items: T[]
+  total: number
+}
+```
+
+### 列表工具函数
+
+```ts
+function groupById<T extends { id: string }>(list: T[]) {
+  return Object.fromEntries(list.map((item) => [item.id, item]))
+}
+```
+
+### 组件与表单工具
+
+```ts
+type SelectOption<T> = {
+  label: string
+  value: T
+}
+```
+
+这些例子里，泛型的价值非常清楚：不是炫技，而是让一份抽象适配多种具体类型，同时保留精确推导。
+
+## 泛型设计的常见误区
+
+### 误区一：只要函数能复用就一定该上泛型
+
+不是。只有当“类型关系”本身也需要复用时，泛型才真正有价值。如果只是普通逻辑复用但类型固定，直接写具体类型反而更清晰。
+
+### 误区二：泛型参数越多越厉害
+
+泛型参数越多，调用和维护成本越高。优先追求最小必要类型参数集合，而不是把每个局部细节都参数化。
+
+### 误区三：约束太弱或太强
+
+约束太弱时，函数内部无法安全操作；约束太强时，调用方又失去抽象收益。最稳定的做法是只声明“真正需要的最小结构”。
+
+### 误区四：用 any 假装泛型
+
+如果某个抽象本来就依赖输入输出类型关系，退回 `any` 往往意味着这个抽象已经丢掉最重要的价值。
+
+## 泛型的工程判断顺序
+
+一个比较稳定的判断方式是：
+
+1. 这段逻辑是否会复用于多种类型
+2. 输入输出之间是否有稳定类型关系
+3. 是否需要对调用方类型保持精确推导
+4. 是否能用最少的类型参数表达清楚
+
+如果这四步都成立，泛型通常就是正确工具。
+
+## 文末速查
+
+| 场景                   | 优先想到的泛型能力  |
+| ---------------------- | ------------------- |
+| 输入输出是同一类类型   | 泛型函数            |
+| 一整个结构依赖类型变量 | 泛型接口 / 泛型类型 |
+| 需要限制最小结构       | 泛型约束            |
+| key 必须来自对象自身   | `K extends keyof T` |
+| 常见类型有默认值       | 默认泛型参数        |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> 泛型的核心价值不是“更抽象”，而是在抽象过程中依然保留输入与输出之间的类型关系。

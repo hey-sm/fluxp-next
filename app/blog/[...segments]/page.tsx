@@ -29,7 +29,7 @@ export default async function BlogPostPage({
 
   return (
     <BlogContentLayout headings={doc.headings}>
-      <main className="mx-auto w-full max-w-[min(100%,72rem)]">
+      <main className="w-full">
         <header className="border-border mb-10 border-b pb-8">
           {doc.date && <p className="text-muted-foreground text-sm">{doc.date}</p>}
           <h1 className="mt-2 text-4xl font-semibold tracking-tight">{doc.title}</h1>

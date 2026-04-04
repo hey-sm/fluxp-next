@@ -1,0 +1,366 @@
+---
+title: Lanes与优先级模型
+category: react
+excerpt: React 的 Lanes 与优先级模型，包括 Lane 的位掩码语义、更新分配、根节点选 lane 逻辑，以及它和 Scheduler、Fiber 的关系。
+slug: react-lanes-priority-model-guide
+tags: [React, Lanes, Priority, Scheduler, Fiber]
+---
+
+{/* @format */}
+
+# React Lanes 与优先级模型指南
+
+如果说 `Fiber` 解决的是“React 把渲染工作拆成可管理工作单元”的问题，`Scheduler` 解决的是“这些工作什么时候执行”的问题，那么 `Lanes` 解决的就是另一个更基础的问题：**React 如何表示、组合、筛选和追踪不同优先级、不同类别的更新**。
+
+在现代 React 中，优先级不再只是一个简单的数字等级。React 内部使用 `Lane` 和 `Lanes` 这套位掩码模型，把“更新类别”“优先级”“是否挂起”“是否被唤醒”“是否需要一起提交”等信息统一到同一套二进制表示里。没有这套模型，React 很难同时处理同步更新、默认更新、Transition、Suspense 重试、hydration 与后台工作。
+
+本文聚焦 React 18 之后的 `Lanes / 优先级模型`，不展开完整源码解析，但会建立一套足以支撑工程判断的内部心智模型。
+
+## Lanes 是什么
+
+React 内部通常区分两个概念：
+
+- `Lane`：一个具体的工作位，通常可以理解为一个二进制位
+- `Lanes`：多个 Lane 组成的集合，本质上是一个位掩码
+
+因此，`Lane` 更像“单个通道”，`Lanes` 更像“多个通道的组合结果”。
+
+一个最重要的认识是：  
+React 的优先级模型不是“给更新贴一个简单的高、中、低标签”，而是“给更新分配到某个或某组 Lane 中，再对 Lane 集合做运算和调度”。
+
+例如，概念上可以把它理解为：
+
+```ts
+const SyncLane = 0b000001
+const DefaultLane = 0b000100
+const TransitionLane = 0b010000
+
+const pendingLanes = SyncLane | TransitionLane
+```
+
+这样一来，React 就能同时表达：
+
+- 当前既有同步更新，也有 Transition 更新
+- 两类更新不是互斥状态，而是并存状态
+- 后续可以通过位运算快速筛选出下一批要处理的工作
+
+## 为什么 React 需要 Lanes
+
+如果优先级只是一个单独的数值，React 会很难处理现代渲染中的几个关键场景：
+
+- 一个根节点上同时存在多种不同紧迫程度的更新
+- 一部分更新已经挂起，另一部分更新仍然可以继续推进
+- 某些更新需要在后续被重试
+- 某些更新虽然不是最高优先级，但必须和另外一些更新一起提交
+
+单一优先级模型更适合表达“当前只做哪一种事”，但不擅长表达“当前同时积压了哪些类别的事”。而现代 React 的真实状态更接近后者。
+
+Lanes 的本质价值，在于它把优先级从“单个标量”提升为了“可组合的集合模型”。这样 React 就可以：
+
+- 合并多类待处理工作
+- 快速检查某个类别是否存在
+- 快速移除已完成的那部分工作
+- 在挂起、唤醒、重试、纠缠等状态之间保留足够的信息
+
+## Lane 与优先级不是同一个概念
+
+这是理解 Lanes 时最容易混淆的一点。
+
+- `Lane` 不是简单的“优先级枚举值”
+- `Scheduler priority` 也不是 `Lane` 的直接镜像
+
+更准确的关系是：
+
+- `Lane` 表示 React 内部的一类工作及其身份
+- React 会根据当前待处理的 `Lanes` 推导出本轮工作应采用的调度优先级
+- Scheduler 再据此决定如何安排宿主回调
+
+因此，Lanes 更像 reconciler 内部的工作分类系统，而 Scheduler priority 更像调度层面对这批工作的执行等级判断。两者关联紧密，但并不等价。
+
+## 为什么位掩码适合 React
+
+位掩码模型之所以适合 React，不只是因为“性能快”，更因为它能非常自然地表达集合运算。
+
+### 合并更新
+
+```ts
+const merged = lanesA | lanesB
+```
+
+### 判断某类工作是否存在
+
+```ts
+const hasTransitionWork = (pendingLanes & transitionLanes) !== 0
+```
+
+### 移除已完成工作
+
+```ts
+const remaining = pendingLanes & ~finishedLanes
+```
+
+### 取出当前最高优先级的一位
+
+```ts
+const highestPriorityLane = lanes & -lanes
+```
+
+这些运算都是 O(1) 量级，并且非常适合表达“并存的多类待处理工作”。这正是 Lanes 能在 Fiber 树和根节点上大规模使用的关键原因。
+
+## React 内部主要追踪哪些 Lane 状态
+
+在当前项目使用的 `react-dom@19.2.4` 客户端实现中，可以直接看到根节点和 Fiber 上维护了多组与 Lane 相关的字段。最重要的一批包括：
+
+- `fiber.lanes`
+- `fiber.childLanes`
+- `root.pendingLanes`
+- `root.suspendedLanes`
+- `root.pingedLanes`
+- `root.expiredLanes`
+- `root.entangledLanes`
+- `root.expirationTimes`
+
+这些字段并不是重复信息，而是在不同层面回答不同问题。
+
+### fiber.lanes
+
+表示当前 Fiber 自身有哪些待处理工作。
+
+### fiber.childLanes
+
+表示当前 Fiber 的子树中有哪些待处理工作。它的价值在于让 React 能快速判断某个子树是否还有值得继续向下遍历的工作。
+
+### root.pendingLanes
+
+表示整个根节点当前还积压着哪些 Lane 的工作。这是“根上有哪些活还没干完”的总表。
+
+### root.suspendedLanes
+
+表示哪些 Lane 当前因为 Suspense 或数据等待等原因处于挂起状态。
+
+### root.pingedLanes
+
+表示原本挂起的 Lane 中，哪些已经被重新唤醒，可以再次参与调度。
+
+### root.expiredLanes
+
+表示哪些 Lane 因为等待过久已经过期，需要以更紧迫的方式处理，避免长期饥饿。
+
+### root.entangledLanes
+
+表示哪些 Lane 被“纠缠”在一起，需要协同推进，不能被完全独立地拆开处理。
+
+### root.expirationTimes
+
+表示每个 Lane 对应的过期时间。React 会用它来做饥饿避免与过期升级。
+
+## 更新是如何拿到 Lane 的
+
+React 不会把所有更新都塞进同一个 Lane。不同来源、不同语义的更新，会被分配到不同的 Lane 组中。
+
+从当前实现与公开 API 语义结合来看，可以把常见情况概括为：
+
+- 同步、离散交互类更新：更靠近高优先级 Lane
+- 普通状态更新：默认 Lane
+- `startTransition` / `useTransition`：Transition Lanes
+- Suspense 重试：Retry Lanes
+- 空闲或后台工作：更靠近 Idle / Offscreen 相关 Lane
+
+对应用开发者来说，最常见的开发入口主要有两个：
+
+### 默认更新
+
+普通的 `setState`、普通事件后的更新，通常会落到默认或更高优先级 Lane，具体取决于事件类型和上下文。
+
+### Transition 更新
+
+当你使用 `startTransition` 或 `useTransition` 时，React 会把这些更新标记为 Transition。React 官方文档明确说明，Transition update 是“非阻塞”的，并且会在更紧急更新到来时被中断和重启。  
+来源：[startTransition](https://react.dev/reference/react/startTransition) 与 [useTransition](https://react.dev/reference/react/useTransition)
+
+在当前 `react-dom@19.2.4` 实现中，`requestTransitionLane()` 会为当前事件范围内的 Transition 领取一个 Transition Lane，并在需要时轮换到下一个可用的 Transition 位。这说明 Transition 并不是“单个固定优先级槽位”，而是一组 Lane。
+
+## 为什么 Transition 是“一组 Lane”，而不是一个 Lane
+
+这是现代 React 很重要的设计点。
+
+如果所有 Transition 都共享同一个位，那么 React 对不同 Transition 批次的跟踪能力会更弱。把 Transition 设计成一组 Lane，能带来几个好处：
+
+- 可以更细粒度地区分不同批次的过渡更新
+- 可以在必要时把某些 Transition 彼此纠缠或关联
+- 可以在挂起、恢复、重试时保留更丰富的状态
+
+因此，`TransitionLanes` 更适合被理解为“一个 Lane 范围”，而不是一个单独常量。
+
+## Retry Lane 是做什么的
+
+当某些工作因为 Suspense 等原因暂时无法完成，React 后续可能需要重试它们。当前实现中存在 `claimNextRetryLane()`，说明 Retry 也不是一个抽象标记，而是有专门的 Lane 组来承载重试工作。
+
+Retry Lane 的意义在于：
+
+- 让“首次尝试”和“后续重试”在内部调度上可区分
+- 避免所有重试工作都和普通默认更新混在一起
+- 为 Suspense 恢复路径提供独立的工作表示
+
+## 根节点如何选择 nextLanes
+
+更新被打上 Lane 只是第一步。真正决定“下一轮渲染该处理哪一批工作”的，是根节点的 `getNextLanes` 逻辑。
+
+从当前实现看，`getNextLanes(root, wipLanes, rootHasPendingCommit)` 大致会考虑以下因素：
+
+- `root.pendingLanes` 中当前有哪些工作
+- 哪些 Lane 正处于 `suspendedLanes`
+- 哪些挂起工作已经被 `pingedLanes` 唤醒
+- 当前是否已有进行中的 `wipLanes`
+- 当前根是否还有待提交的 commit
+
+它不是简单做一件事：“拿最小的那一位”。更准确地说，它会在可执行、未挂起、已唤醒、未完成的工作中，找出下一批最合适的 `nextLanes`。
+
+可以概括成下面这条思路：
+
+```text
+pendingLanes
+  -> 去掉暂时不能做的 suspendedLanes
+  -> 优先考虑未挂起的更高优先级工作
+  -> 如果挂起工作被 ping，重新纳入竞争
+  -> 必要时维持当前 wipLanes，避免无意义切换
+  -> 得到本轮 render 应处理的 nextLanes
+```
+
+这也是为什么 React 渲染不是“有更新就立即全做完”，而是“根节点根据 Lanes 状态决定本轮做哪一批”。
+
+## getHighestPriorityLanes 做了什么
+
+在当前客户端实现中，`getHighestPriorityLanes(lanes)` 会从一组待处理 Lane 中挑出当前应当最优先处理的那一批 Lane。
+
+这里要注意两个事实：
+
+- React 挑选的未必总是单一一位
+- 某些 Lane 组会成批返回
+
+例如 Transition lanes、Retry lanes 这类范围型 Lane，内部挑选逻辑并不是“永远只拿一个 bit”，而是会根据组语义返回相应范围中的可处理部分。
+
+因此，React 的优先级判断不是简单的“数字越小越高”，而是在 Lane 分组与组内选择规则基础上完成的。
+
+## Lane 如何从 Fiber 一路冒泡到 Root
+
+一次更新分配到某个 Lane 后，不只是当前 Fiber 知道这件事。React 会把这个 Lane 沿着 Fiber 的父路径向上标记。
+
+在当前实现中，`markUpdateLaneFromFiberToRoot` 会做两件关键事情：
+
+- 把 Lane 标记到源 Fiber 的 `lanes`
+- 一路向上把 Lane 合并到祖先的 `childLanes`
+
+这样做的结果是：
+
+- 当前节点知道自己有工作
+- 父节点知道自己的子树里有工作
+- 根节点最终能把这条更新纳入 `pendingLanes`
+
+这就是 Lanes 能真正参与遍历剪枝和根级调度的关键。如果没有 `childLanes` 这条链路，React 就很难高效判断哪些子树仍然值得继续遍历。
+
+## Lane 与 Scheduler 是如何衔接的
+
+Lanes 并不直接决定宿主回调如何调度。它先影响 React 选择出的 `nextLanes`，然后 React 再把这批 Lane 映射到调度优先级，交给 Scheduler。
+
+在当前 `scheduleTaskForRootDuringMicrotask` 的实现中，可以看到 React 会：
+
+1. 根据 `pendingLanes`、`suspendedLanes`、`pingedLanes` 计算 `nextLanes`
+2. 再通过 `lanesToEventPriority(nextLanes)` 推导事件优先级
+3. 最后映射到 Scheduler 的 `UserBlockingPriority`、`NormalPriority`、`IdlePriority` 等等级
+
+这说明：
+
+- Lanes 是 reconciler 的工作表示模型
+- Scheduler priority 是调度层的执行等级模型
+- React 通过映射把两者连接起来
+
+因此，不能把 “Lane = Scheduler priority” 简单画等号。
+
+## Lane 与过期时间
+
+React 并不希望低优先级工作被无限期拖延。当前实现中，根节点维护了 `expirationTimes`，并通过 `computeExpirationTime(lane, currentTime)` 为不同 Lane 计算过期窗口。
+
+从 `react-dom@19.2.4` 当前实现可见：
+
+- 更高紧迫度的 Lane 过期窗口更短
+- 默认、Transition 等一批 Lane 会有更长的过期窗口
+- Retry、Idle、Offscreen 等某些 Lane 则可能不采用普通过期策略
+
+随后在调度过程中，React 会把已经过期的 Lane 合并进 `expiredLanes`。这套机制的目的非常明确：  
+避免低优先级工作长期饥饿。
+
+## 什么是 Entanglement
+
+`entangledLanes` 是 Lanes 模型里一个非常关键但常被忽略的概念。
+
+所谓 entanglement，可以理解为：  
+某些 Lane 虽然在位层面是不同的，但在提交语义上不能完全独立处理，因此 React 需要把它们作为关联工作来推进。
+
+当前实现中，根节点维护了：
+
+- `root.entangledLanes`
+- `root.entanglements`
+
+它们的作用是记录某个 Lane 与哪些 Lane 存在关联关系。这样在后续选择 `nextLanes` 或清理完成状态时，React 不会把本应一起推进的工作错误拆开。
+
+## React 18 与 React 19 下的关系
+
+从内部模型角度看，React 18 是 Lanes 心智模型真正成为现代 React 主线的分水岭。Fiber、Scheduler、Suspense、Transition 等能力开始围绕这套 Lane-based 模型协同工作。
+
+React 19 并没有抛弃 Lanes，也没有换成另一套新的优先级架构。更准确的说法是：
+
+- React 18 建立现代 Lane-based 调度与渲染体系
+- React 19 在其基础上继续增强 Suspense、hydration、数据读取与开发体验
+
+因此，理解 Lanes 时，应该把 React 18 和 React 19 看成连续模型，而不是两个不兼容时代。
+
+## 常见误区
+
+### Lanes 只是另一套优先级枚举
+
+不是。Lanes 的本质是可组合的位掩码集合模型，而不是简单的数字优先级表。
+
+### 一个更新一定只对应一个全局固定优先级
+
+不准确。更新会被分配到某个 Lane 或某组 Lane，后续调度还会结合根上的 `pending / suspended / pinged / expired / entangled` 状态综合决定。
+
+### Transition 只是“低优先级”
+
+Transition 的语义不只是“低”，而是“可中断、可在后台推进、遇到更紧急更新可被重启”的一类工作模型。它在内部也不是一个单一槽位，而是一组 Transition Lanes。
+
+### Scheduler priority 和 Lane 是同一层概念
+
+不是。Lane 是 React reconciler 内部的工作表示，Scheduler priority 是调度层的执行等级。React 会把前者映射到后者。
+
+### Lanes 只影响调度，不影响遍历
+
+也不准确。`fiber.lanes` 与 `childLanes` 会直接影响 React 是否继续深入某棵子树，因此它不仅影响调度，也影响遍历剪枝与 render 过程本身。
+
+## 工程视角下的理解方式
+
+如果从工程角度压缩成最重要的判断，可以记住下面几条：
+
+- Lanes 是 React 内部表示“有哪些工作待处理”的统一模型
+- 它解决的不只是优先级高低，还包括挂起、唤醒、重试、关联与过期
+- 一个根节点可以同时积压多类更新，Lanes 让这种并存状态可表示、可合并、可筛选
+- Fiber 负责承载 Lane 信息并沿树传播
+- Scheduler 负责根据 `nextLanes` 安排实际执行
+
+## 文末速查
+
+| 概念             | 一句话定义                         |
+| ---------------- | ---------------------------------- |
+| `Lane`           | 一个具体的工作位，表示一类更新     |
+| `Lanes`          | 多个 Lane 组成的位掩码集合         |
+| `fiber.lanes`    | 当前 Fiber 自身待处理的 Lane       |
+| `childLanes`     | 当前 Fiber 子树中待处理的 Lane     |
+| `pendingLanes`   | 根节点上所有待处理工作的总集合     |
+| `suspendedLanes` | 当前被挂起的 Lane                  |
+| `pingedLanes`    | 被重新唤醒、可再次调度的 Lane      |
+| `expiredLanes`   | 等待过久、需要更紧迫处理的 Lane    |
+| `entangledLanes` | 必须协同推进的关联 Lane            |
+| `nextLanes`      | 根节点本轮真正准备处理的 Lane 集合 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Lanes 的本质不是“更多优先级”，而是 React 用一套位掩码模型同时表示工作类别、优先级、挂起状态与调度选择的方式。

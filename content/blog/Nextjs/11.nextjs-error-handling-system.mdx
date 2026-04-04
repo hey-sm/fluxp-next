@@ -1,0 +1,220 @@
+---
+title: 错误处理
+category: nextjs
+excerpt: 围绕 expected errors、uncaught exceptions、error.tsx、global-error.tsx、notFound() 与 Server Actions 反馈，系统讲清 Next.js App Router 的错误处理主线。
+slug: nextjs-error-handling
+tags: [Next.js, Error Handling, notFound, Server Actions, error.tsx]
+---
+
+{/* @format */}
+
+# Next.js 错误处理
+
+在 App Router 中，错误处理不再只是“出了异常显示一个页面”。它被拆成了多个边界：预期内业务错误、局部运行时异常、全局错误兜底、资源级 404，以及表单提交和 Server Actions 返回的反馈。只有把这些边界分开，错误处理策略才会稳定。
+
+这篇文章的重点不是列出几个文件名，而是建立一套判断框架：哪些问题属于 expected error，哪些应该进入 `error.tsx`，哪些该用 `notFound()`，以及为什么它们不能混用。
+
+官方文档主线参考：
+
+- [Error Handling](https://nextjs.org/docs/app/getting-started/error-handling)
+- [Loading UI and Streaming](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming)
+- [notFound](https://nextjs.org/docs/app/api-reference/functions/not-found)
+
+## 先建立一个整体认知
+
+在 App Router 中，错误大致分成四类：
+
+- Expected errors：用户可修正、业务上可预期的失败
+- Uncaught exceptions：运行时真正异常
+- Not Found：资源缺失或不应显示
+- 全局兜底：超出局部边界的故障
+
+这四类问题不应共享同一套处理方式。
+
+## Expected errors
+
+一句话定义：expected errors 是业务流程中可以预期、可展示、可恢复的失败结果。
+
+它解决什么问题：很多表单失败、权限不足、输入校验失败并不是系统异常，而是正常业务分支。
+
+什么时候用：
+
+- 表单字段校验失败
+- 登录失败
+- 业务规则不满足
+
+```ts
+export async function createPost(formData: FormData) {
+  'use server'
+
+  const title = formData.get('title')?.toString().trim()
+
+  if (!title) {
+    return { message: '标题不能为空' }
+  }
+
+  return { message: '' }
+}
+```
+
+常见注意点：对于 expected errors，官方主线建议将它们作为返回值建模，而不是抛异常交给错误边界。来源：[Error Handling](https://nextjs.org/docs/app/getting-started/error-handling)
+
+## Uncaught exceptions
+
+一句话定义：uncaught exceptions 是未被业务逻辑处理的运行时异常，应交给错误边界兜底。
+
+它解决什么问题：真正的异常意味着当前渲染链路已经无法按预期继续，必须由边界接管。
+
+什么时候用：
+
+- 数据解析崩溃
+- 未处理运行时错误
+- 下游服务异常未被显式吸收
+
+常见注意点：异常边界不应用来承接所有业务失败，否则 UI 会把用户可修正问题错误地展示成“系统故障”。
+
+## error.tsx
+
+一句话定义：`error.tsx` 是 route segment 级的客户端错误边界文件。
+
+它解决什么问题：把局部段中的运行时异常限制在该边界内，而不是让整个应用崩掉。
+
+什么时候用：
+
+- 列表页或详情页希望局部失败可重试
+- 上层 layout 仍应保留
+
+```tsx
+'use client'
+
+export default function Error({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string }
+  reset: () => void
+}) {
+  return (
+    <div>
+      <p>{error.message}</p>
+      <button onClick={reset}>Retry</button>
+    </div>
+  )
+}
+```
+
+常见注意点：`error.tsx` 需要 `'use client'`，因为它本质上是 React Error Boundary。它适合真正异常，不适合普通校验错误。
+
+## global-error.tsx
+
+一句话定义：`global-error.tsx` 是根级兜底错误边界，用于处理超出局部边界的全局错误。
+
+它解决什么问题：当错误发生在根布局级或更高层时，局部 `error.tsx` 已不足以覆盖，需要全局级回退 UI。
+
+什么时候用：
+
+- 根布局错误
+- 整站级兜底错误页
+
+常见注意点：它不是普通页面错误的第一选择，而是更高层的最后兜底。
+
+## notFound()
+
+一句话定义：`notFound()` 用于进入资源缺失语义，并触发 `not-found.tsx`。
+
+它解决什么问题：资源不存在和系统崩溃不是一回事。`notFound()` 让 404 成为明确的内容语义，而不是异常副产品。
+
+什么时候用：
+
+- 文章不存在
+- 商品不存在
+- 当前资源不应对用户暴露
+
+```tsx
+import { notFound } from 'next/navigation'
+
+export default async function Page() {
+  const post = null
+
+  if (!post) {
+    notFound()
+  }
+
+  return <div>{post.title}</div>
+}
+```
+
+常见注意点：`notFound()` 的重点是“资源级缺失”，不适合替代所有错误场景。
+
+## Server Actions 中的错误
+
+一句话定义：Server Actions 中既可能出现 expected errors，也可能出现真正异常，二者应采用不同处理路径。
+
+它解决什么问题：表单提交是现代 Next.js 高概率场景，如果不先区分业务失败和系统失败，用户反馈会非常混乱。
+
+什么时候用：
+
+- 表单校验失败
+- 第三方接口失败但用户可理解
+- 写入链路异常
+
+更稳定的处理方式通常是：
+
+- 可预期失败：返回结构化结果
+- 真正异常：抛出后由边界或日志处理
+
+## 错误边界的层级价值
+
+错误处理不只是“有一个兜底页”就够了，更重要的是边界粒度：
+
+- 页面内部局部块失败：更小的组件级处理或返回态
+- route segment 失败：`error.tsx`
+- 根布局失败：`global-error.tsx`
+- 资源不存在：`notFound()`
+
+边界越准确，用户体验越稳定，也越利于故障定位。
+
+## 一个更稳的判断顺序
+
+在真实项目里，面对失败时更稳的顺序通常是：
+
+- 先问这是不是用户可修正的 expected error
+- 如果是，就用返回值和 UI 状态处理
+- 再问是不是资源不存在
+- 资源缺失则用 `notFound()`
+- 真正异常再交给 `error.tsx` 或 `global-error.tsx`
+
+这样能最大程度避免错误语义混乱。
+
+## 常见误区
+
+### 误区一：所有失败都应该抛异常
+
+不准确。大量业务失败属于 expected errors，应该作为正常流程处理。
+
+### 误区二：`notFound()` 就是另一个错误页
+
+不准确。它表达的是资源缺失，不是系统故障。
+
+### 误区三：有了 `error.tsx`，表单校验就不用单独处理
+
+不准确。校验失败不应退化成“页面崩了”的体验。
+
+### 误区四：错误边界越全局越省事
+
+全局兜底固然必要，但越靠近问题发生点的边界，通常越有更好的用户体验和更清晰的调试路径。
+
+## 文末速查
+
+| 场景 | 优先想到的处理方式 |
+| --- | --- |
+| 表单校验失败 | expected error 返回值 |
+| 可预期业务失败 | 返回可展示状态 |
+| 局部运行时异常 | `error.tsx` |
+| 根级兜底异常 | `global-error.tsx` |
+| 资源不存在 | `notFound()` + `not-found.tsx` |
+| 提交链路真正异常 | 抛出异常并交给边界 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Next.js 错误处理的关键，不是“有没有兜底页”，而是能否把业务失败、系统异常和资源缺失准确分层。

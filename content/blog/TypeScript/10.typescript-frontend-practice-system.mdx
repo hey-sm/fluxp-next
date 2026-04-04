@@ -1,0 +1,285 @@
+---
+title: 工程实践
+category: ts
+excerpt: 围绕 API 数据建模、组件 props、表单、状态管理、路由参数与边界校验，系统讲清 TypeScript 在 React 与 Vue 项目中的真实落地方式。
+slug: typescript-frontend-practice-system
+tags: [TypeScript, Frontend, API Modeling, Props, State Management]
+---
+
+{/* @format */}
+
+# TypeScript 前端工程实践体系
+
+理解 TypeScript 语言本身并不等于会在前端项目里真正用好 TypeScript。很多团队的真实问题并不是“不会写联合类型”或“不会写泛型”，而是类型系统没有进入工程主线：接口响应没有稳定建模，组件 props 类型和运行时边界脱节，表单与状态管理没有形成清晰约束，路由参数和外部输入进入应用后缺少可靠收窄。
+
+这篇文章讨论的重点不是某个框架专属 API，而是前端项目里最常见的几类类型边界，以及在 React、Vue 等现代客户端工程中都成立的通用做法。
+
+官方文档主线参考：
+
+- [Everyday Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html)
+- [Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+- [Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)
+
+## 先建立一个工程认知
+
+前端项目中的类型问题，大体可以分为三层：
+
+- 输入边界：接口响应、URL 参数、本地存储、环境变量、表单输入
+- 应用内部：组件 props、状态管理、工具函数、路由对象
+- 输出边界：请求 payload、组件对外事件、提交给服务端的数据
+
+TypeScript 的价值，不是把内部一切都标成复杂类型，而是让这些边界保持一致、可推导、可收紧。
+
+## API 数据建模
+
+一句话定义：API 数据建模是为接口响应、请求参数和前端内部消费结构建立明确类型契约。
+
+它解决什么问题：很多项目把接口数据直接在组件里散着用，导致字段来源不清、后端调整难以发现、局部断言泛滥。
+
+什么时候用：
+
+- 请求响应数据
+- 列表项、详情页、提交 payload
+- 前后端字段命名和语义存在差异时
+
+```ts
+type UserDto = {
+  id: string
+  full_name: string
+  avatar_url: string | null
+}
+
+type User = {
+  id: string
+  name: string
+  avatarUrl?: string
+}
+
+function mapUser(dto: UserDto): User {
+  return {
+    id: dto.id,
+    name: dto.full_name,
+    avatarUrl: dto.avatar_url ?? undefined,
+  }
+}
+```
+
+常见注意点：不要把服务端 DTO 直接等同于前端内部模型。输入结构和应用内部结构往往语义不同，显式映射比到处透传原始字段更稳定。
+
+## 输入模型与输出模型要分开
+
+很多工程问题都来自“一个类型到处通用”。更稳的做法通常是：
+
+- 服务端响应类型：描述外部输入
+- 组件或页面内部模型：描述前端消费结构
+- 提交 payload 类型：描述输出给服务端的数据
+
+这样做的价值在于：
+
+- 输入边界清晰
+- 转换点清晰
+- 后端字段变化影响范围可控
+- 前端内部不被迫长期背负后端命名和空值设计
+
+## 组件 props 类型
+
+一句话定义：组件 props 类型用于定义组件 API 的输入边界，而不是简单给参数补注解。
+
+它解决什么问题：组件如果没有清晰的输入契约，复用能力和重构安全性都会快速下降。
+
+什么时候用：
+
+- React 函数组件参数
+- Vue `defineProps`
+- 公共 UI 组件和业务组件
+
+```ts
+type ButtonProps = {
+  size?: 'sm' | 'md' | 'lg'
+  disabled?: boolean
+  onClick?: () => void
+}
+
+function Button({ size = 'md', disabled = false, onClick }: ButtonProps) {
+  return null
+}
+```
+
+常见注意点：props 类型的重点不是“字段列全”，而是语义准确。例如是否真的允许 `undefined`、是否应使用字面量联合限制取值、哪些回调参数应该明确传出。默认值属于 API 设计的一部分，应该和类型定义一起考虑。
+
+## 表单类型
+
+一句话定义：表单类型用于约束输入字段结构、提交数据形态和校验后的数据边界。
+
+它解决什么问题：表单代码最容易出现“字段名漂移、局部状态不一致、提交时类型与接口不匹配”的问题。
+
+什么时候用：
+
+- 登录、筛选、创建、编辑表单
+- 多步骤表单
+- 需要区分草稿态与提交态的场景
+
+```ts
+type ProductForm = {
+  title: string
+  price: string
+  categoryId: string
+}
+
+type ProductPayload = {
+  title: string
+  price: number
+  categoryId: string
+}
+
+function toPayload(form: ProductForm): ProductPayload {
+  return {
+    title: form.title.trim(),
+    price: Number(form.price),
+    categoryId: form.categoryId,
+  }
+}
+```
+
+常见注意点：表单状态类型不一定等于提交 payload 类型。因为表单层往往包含字符串输入、中间态、未通过校验的值，而提交层则需要更稳定、更规范化的数据结构。
+
+## 状态管理类型
+
+一句话定义：状态管理类型用于约束 store、局部状态、派生状态和 action 的读写边界。
+
+它解决什么问题：状态如果没有清晰的类型边界，更新逻辑和消费逻辑会快速耦合，尤其在共享状态场景下更明显。
+
+什么时候用：
+
+- 组件局部状态
+- 全局 UI 状态
+- store / reducer / action 设计
+
+```ts
+type FilterState = {
+  keyword: string
+  sortBy: 'latest' | 'price'
+  page: number
+}
+
+type FilterActions = {
+  setKeyword: (value: string) => void
+  setSortBy: (value: FilterState['sortBy']) => void
+  reset: () => void
+}
+```
+
+常见注意点：状态类型不只是 state 本身，还包括更新入口。真实项目里，action 类型设计是否清晰，直接决定后续状态管理代码是否稳定。
+
+## 路由参数类型
+
+一句话定义：路由参数类型用于约束 URL 中携带的数据在进入页面组件后的使用方式。
+
+它解决什么问题：URL 参数天然来自外部输入，通常是字符串且可能缺失。如果直接把它们当成业务层确定值使用，很容易出现运行时错误。
+
+什么时候用：
+
+- 详情页 id
+- 列表筛选参数
+- 分页、排序、搜索条件
+
+```ts
+type RouteQuery = {
+  page?: string
+  keyword?: string
+}
+
+function parsePage(query: RouteQuery) {
+  const page = Number(query.page ?? '1')
+  return Number.isNaN(page) ? 1 : page
+}
+```
+
+常见注意点：路由参数进入应用时通常只能先视为外部原始输入，而不是业务层最终类型。先解析、再收窄、再进入业务逻辑，是更稳的顺序。
+
+## 边界校验
+
+一句话定义：边界校验是在外部输入进入应用核心逻辑之前，先做显式验证和收窄。
+
+它解决什么问题：TypeScript 只能保证编译期类型安全，不能替代运行时校验。来自接口、URL、本地存储和用户输入的数据，在运行时仍然可能不符合预期。
+
+什么时候用：
+
+- 处理未知接口响应
+- 读取 `localStorage`
+- 从 URL、第三方 SDK、浏览器环境拿值
+
+```ts
+type User = {
+  id: string
+  name: string
+}
+
+function isUser(value: unknown): value is User {
+  return typeof value === 'object' && value !== null && 'id' in value && 'name' in value
+}
+```
+
+常见注意点：不要把“有 TypeScript 类型”误解成“运行时一定安全”。类型系统负责开发期契约，边界校验负责把外部输入真正变成可信内部数据。
+
+## 前端项目里的一条稳定主线
+
+如果把 TypeScript 放回真实项目流程，一个比较稳定的使用顺序是：
+
+1. 先定义外部输入类型，如 DTO、路由参数、表单原始值
+2. 在边界层完成解析、收窄和映射
+3. 再进入应用内部模型、组件 props 和状态管理
+4. 对外提交时单独定义输出 payload 类型
+
+这条主线的意义是把类型系统从“文件内注解”提升为“数据流契约”。
+
+## 真实项目中的推荐组织方式
+
+### 模型按领域组织
+
+例如 `user`、`product`、`order`，而不是堆一个巨大的 `types.ts`。类型跟随领域比跟随语法分类更利于维护。
+
+### 输入输出分层
+
+`UserDto`、`UserForm`、`UserPayload`、`UserViewModel` 这种命名虽然更明确，但前提是确实存在语义差异，不要为了模式而制造无意义层级。
+
+### 组件 API 保持窄边界
+
+不要让一个组件 props 接收“几乎整个业务对象”，除非它真的需要。组件输入越窄，重用和重构越稳定。
+
+### 状态层只保存真正共享和可变的数据
+
+不要把所有接口返回值、临时 UI 状态和表单中间态都无差别放进共享状态层。
+
+## 常见误区
+
+### 误区一：接口返回什么，前端类型就原样照搬什么
+
+这会让前端模型长期被后端字段命名和空值策略牵着走，边界越来越模糊。
+
+### 误区二：组件 props 类型越完整越好
+
+组件 API 追求的是准确，而不是“大而全”。把过多无关字段暴露进组件，只会增加耦合。
+
+### 误区三：有类型就不需要运行时校验
+
+TypeScript 无法验证网络响应、浏览器输入和用户操作的真实性，边界校验仍然必需。
+
+### 误区四：前端工程实践就是多写几个工具类型
+
+工具类型只是手段。真正决定工程质量的是你是否把类型放在了正确的数据流节点上。
+
+## 文末速查
+
+| 场景                   | 优先想到的做法                  |
+| ---------------------- | ------------------------------- |
+| 接口响应进入前端       | DTO 类型 + 显式映射             |
+| 组件输入边界           | 精确 props 类型                 |
+| 表单中间态与提交态不同 | 分开定义表单类型和 payload 类型 |
+| 共享状态读写           | state 类型 + action 类型        |
+| URL 参数进入页面       | 先解析再收窄                    |
+| 外部未知输入           | 运行时校验 + 类型守卫           |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> 前端项目里的 TypeScript，不是为了让每个文件“都有类型”，而是为了让数据在进入、流转和输出的每一个关键边界都具备明确契约。

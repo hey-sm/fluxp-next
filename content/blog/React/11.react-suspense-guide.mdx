@@ -1,0 +1,458 @@
+---
+title: Suspense
+category: react
+excerpt: React Suspense 的触发条件、fallback 提交流程、Transition 协作机制，以及它和流式 SSR、hydration 的关系。
+slug: react-suspense-guide
+tags: [React, Suspense, Transition, Streaming SSR, Hydration]
+---
+
+{/* @format */}
+
+# React Suspense 工作机制指南
+
+在现代 React 中，`Suspense` 已经不是一个只服务于代码分割的小工具。它的真实定位，是一套围绕“渲染期等待”建立的协调机制：当一段 UI 在当前时刻还无法完成渲染时，React 可以让这段渲染暂时挂起，显示边界提供的 `fallback`，并在资源就绪后重新尝试渲染真实内容。
+
+如果把前面的几篇文章串起来看，`Suspense` 正好位于这条链路的交汇点上：
+
+- `Fiber` 提供可中断、可重试的渲染基础
+- `Scheduler` 决定任务何时推进
+- `Lanes` 表示哪些工作被挂起、唤醒和重试
+- `Suspense` 则定义“当渲染期资源尚未就绪时，界面应如何降级与恢复”
+
+本文聚焦 React 18 之后的现代 Suspense 机制，重点讨论它的触发条件、边界行为、与 `startTransition` 的关系，以及在流式 SSR 与 hydration 中的作用。
+
+## Suspense 是什么
+
+`<Suspense>` 是 React 提供的边界组件，用于声明“这部分子树在渲染时可能暂时不可用，如果发生等待，请先显示一个备用界面”。
+
+最基础的写法如下：
+
+```tsx
+import { Suspense } from 'react'
+
+export default function App() {
+  return (
+    <Suspense fallback={<p>Loading...</p>}>
+      <Panel />
+    </Suspense>
+  )
+}
+```
+
+这里真正重要的不是 `fallback` 长什么样，而是这层边界在语义上给 React 提供了一个恢复点：
+
+- 子树能正常完成渲染时，提交真实内容
+- 子树在渲染中发生等待时，提交 `fallback`
+- 等待结束后，再重新尝试这棵子树
+
+因此，Suspense 不是“异步请求组件”，而是“渲染期等待的边界协调机制”。
+
+## 什么会触发 Suspense
+
+不是所有异步逻辑都会触发 Suspense。React 官方文档明确说明，只有 Suspense-enabled data sources 才会激活 `<Suspense>`。当前官方明确列出的主要来源包括：
+
+- 使用 `lazy` 懒加载组件代码
+- 使用 `use` 读取 Promise
+- 使用内建 Suspense 协作的数据框架，例如 Relay、Next.js 等
+
+同时，React 官方也明确指出，Suspense **不会** 感知这些场景：
+
+- 在 `useEffect` 中发请求
+- 在事件处理函数中发请求
+- 普通异步函数本身
+
+来源：
+
+- [\<Suspense>](https://react.dev/reference/react/Suspense)
+- [renderToPipeableStream](https://react.dev/reference/react-dom/server/renderToPipeableStream)
+
+这意味着一个非常关键的判断：
+
+> Suspense 响应的是“渲染期无法继续完成”的状态，而不是“代码里出现了异步”这件事本身。
+
+## 最常见的两个触发来源
+
+### `lazy`：等待组件代码下载
+
+这是最经典、最容易理解的 Suspense 入口。
+
+```tsx
+import { Suspense, lazy } from 'react'
+
+const UserPanel = lazy(() => import('./UserPanel'))
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div>Loading panel...</div>}>
+      <UserPanel />
+    </Suspense>
+  )
+}
+```
+
+当 `UserPanel` 对应的代码块尚未加载完成时，这个组件无法继续完成渲染，于是最近的 Suspense 边界会先显示 `fallback`。
+
+### `use`：等待 Promise 解析
+
+React 19 把 `use(resource)` 引入为正式 API，用于在渲染中读取 Promise 或 Context。React 官方文档明确说明：当 `use` 读取的 Promise 仍处于 pending 状态时，组件会 suspend；如果最近的上层存在 Suspense 边界，就会显示 `fallback`。
+
+```tsx
+import { Suspense, use } from 'react'
+
+function Comments({ commentsPromise }: { commentsPromise: Promise<string[]> }) {
+  const comments = use(commentsPromise)
+
+  return (
+    <ul>
+      {comments.map((comment) => (
+        <li key={comment}>{comment}</li>
+      ))}
+    </ul>
+  )
+}
+
+export default function Page({ commentsPromise }: { commentsPromise: Promise<string[]> }) {
+  return (
+    <Suspense fallback={<p>Loading comments...</p>}>
+      <Comments commentsPromise={commentsPromise} />
+    </Suspense>
+  )
+}
+```
+
+需要特别注意 React 官方 `use` 文档里的一个限制：  
+不推荐在 Client Component 的 render 过程中临时创建 Promise 再传给 `use`，因为这类 Promise 会在每次 render 时被重新创建。更推荐在 Server Component 中创建 Promise，再传入 Client Component，或者使用已集成 Suspense 的框架能力。
+
+来源：[use](https://react.dev/reference/react/use)
+
+## Suspense 的内部工作流程
+
+从工程视角看，Suspense 的流程可以概括为五步：
+
+1. React 进入 `render phase`
+2. 某个子树在渲染过程中无法继续完成
+3. React 记录这条挂起路径，并找到最近的 Suspense 边界
+4. 本轮先渲染并提交该边界的 `fallback`
+5. 等待资源就绪后，再重新调度并重试真实内容
+
+如果把这个过程再说得更接近内部实现一点，可以这样理解：
+
+- Suspense 触发点发生在 `render phase`
+- React 不会在当前无法完成的子树上继续强行往下计算
+- 它会转向最近的 Suspense 边界，并为这条路径准备 fallback 结果
+- 在资源可用后，对应 Lane 会被重新唤醒并进入重试流程
+
+因此，Suspense 的 fallback 不是“副作用补救”，而是 render 流程中的正式分支结果。
+
+## Suspense 与 Render / Commit 的关系
+
+前一篇 Render / Commit 文章已经说明，React 的更新过程可以分为 `render phase` 与 `commit phase`。Suspense 的关键恰恰在于：
+
+- “挂起”发生在 `render phase`
+- `fallback` 的显示发生在 `commit phase`
+
+也就是说，Suspense 不是 DOM 已经更新后才发现“内容没准备好”，而是在渲染计算阶段就已经知道“当前子树暂时无法完成”，于是改为提交 fallback。
+
+这会直接带来几个结论：
+
+- 某次 render 中真实内容没有成功完成，不代表本轮更新失败
+- fallback 本身就是一次合法提交结果
+- 后续资源就绪时，React 会再次进入 render，尝试把 fallback 替换为真实内容
+
+## Suspense 边界应该怎么放
+
+React 官方文档明确提醒，不要给每个组件都包一层 Suspense。边界的粒度，应当对应“你希望用户感知到的加载序列”，而不是对应“项目里的组件文件数”。
+
+来源：[\<Suspense>](https://react.dev/reference/react/Suspense)
+
+### 边界过粗的问题
+
+如果在应用根部包一个巨大的 Suspense 边界，只要其中任意关键子树挂起，整个大区域都可能退回到一个大 spinner。这通常会让页面结构感消失，用户体验较差。
+
+### 边界过细的问题
+
+如果每个小组件外都包一层 Suspense，页面虽然“技术上可运行”，但会导致加载状态过于碎片化，界面跳动明显，阅读路径混乱。
+
+### 推荐的设计原则
+
+更合理的放置方式通常是：
+
+- 按页面的加载序列拆边界
+- 让一个边界对应一个稳定的内容区域
+- 让用户先看到完整骨架，再逐步看到细节
+
+## 嵌套 Suspense 与渐进揭示
+
+Suspense 的一个强大能力，是允许你通过嵌套边界定义“分层揭示顺序”。React 官方示例中明确展示了这一点：外层边界先保证大区域可显示，内层边界再让更细的内容按顺序出现。
+
+```tsx
+import { Suspense } from 'react'
+
+export default function ArtistPage() {
+  return (
+    <Suspense fallback={<BigSpinner />}>
+      <Biography />
+
+      <Suspense fallback={<AlbumsGlimmer />}>
+        <Albums />
+      </Suspense>
+    </Suspense>
+  )
+}
+```
+
+这类结构的实际意义是：
+
+- 如果 `Biography` 还没准备好，先显示外层 `BigSpinner`
+- `Biography` 好了以后，先显示它
+- 如果 `Albums` 还没准备好，再在它自己的位置显示 `AlbumsGlimmer`
+
+这就是 Suspense 的“渐进揭示”能力。边界不是简单套娃，而是在定义一条可感知的加载叙事。
+
+## 已经显示的内容为什么有时不会退回 fallback
+
+这是 Suspense 最容易被误解的行为之一。
+
+React 官方文档说明：如果一次更新导致某个已显示内容再次 suspend，那么默认情况下，最近的 Suspense 边界可能会把已经显示的内容替换为 fallback。但如果这次更新被标记为非紧急更新，例如使用 `startTransition`，React 会尽量避免把已经显示的内容隐藏掉。
+
+来源：
+
+- [\<Suspense>](https://react.dev/reference/react/Suspense)
+- [startTransition](https://react.dev/reference/react/startTransition)
+
+这意味着 Suspense 与 Transition 不是两套平行能力，而是明确协作的：
+
+- 紧急更新 suspend：可能回退到 fallback
+- 非紧急 Transition suspend：尽量保留已经显示的内容，同时在后台准备下一屏
+
+## Transition 与 Suspense 如何配合
+
+下面这个模式在导航、筛选、分页中非常常见：
+
+```tsx
+import { Suspense, useState, useTransition } from 'react'
+
+function Router() {
+  const [page, setPage] = useState('home')
+  const [isPending, startTransition] = useTransition()
+
+  function navigate(nextPage: string) {
+    startTransition(() => {
+      setPage(nextPage)
+    })
+  }
+
+  return (
+    <>
+      <Header pending={isPending} onNavigate={navigate} />
+      <Suspense fallback={<PageSkeleton />}>
+        <Page page={page} />
+      </Suspense>
+    </>
+  )
+}
+```
+
+这类写法的价值不是“让更新变慢”，而是告诉 React：
+
+- 这次切换不是必须立刻阻塞当前界面的紧急操作
+- 如果新页面在渲染时 suspend，不要急着把已显示页面整体替换成 spinner
+- 优先维持交互稳定，再在后台准备新的内容
+
+这也是为什么现代路由器通常会把导航更新自动包进 Transition。
+
+## 什么情况下需要用 `key` 重置 Suspense 边界
+
+React 官方文档还特别强调了一点：  
+在 Transition 中，React 会尽量避免把已经显示的内容退回 fallback。但如果你从“同一个内容区域里的不同参数”切换到“语义上完全不同的内容实例”，就应该通过 `key` 明确告诉 React：这是新内容，应当重置边界。
+
+例如：
+
+```tsx
+<ProfilePage key={userId} userId={userId} />
+```
+
+这类写法的意义不是“强制重渲染”，而是明确内容身份发生变化。这样不同用户资料页之间切换时，Suspense 边界就可以回到新的加载序列，而不是错误地沿用上一页的已揭示状态。
+
+来源：[\<Suspense>](https://react.dev/reference/react/Suspense)
+
+## Suspense 与 Error Boundary 的关系
+
+Suspense 和 Error Boundary 经常同时出现，但它们处理的不是同一类情况。
+
+- Suspense 处理“还没准备好”
+- Error Boundary 处理“真的出错了”
+
+以 `use(promise)` 为例：
+
+- Promise pending：由最近的 Suspense fallback 接管
+- Promise rejected：由最近的 Error Boundary 接管
+
+React 官方 `use` 文档对此有明确说明。Suspense 是等待机制，不是异常兜底机制。二者通常需要配合使用，而不是互相替代。
+
+来源：
+
+- [use](https://react.dev/reference/react/use)
+- [useTransition](https://react.dev/reference/react/useTransition)
+
+## React 18 与 React 19 下的 Suspense
+
+从版本脉络上看，React 18 是 Suspense 真正成为现代渲染主干能力的起点，而 React 19 则让这条链路更完整。
+
+### React 18 的意义
+
+React 官方在 React 18 发布说明中明确写到：新的服务端 API `renderToPipeableStream` 与 `renderToReadableStream` 对服务端 Suspense 和流式 SSR 提供完整支持。也就是说，从 React 18 开始，Suspense 不再只是客户端等待机制，而是直接成为服务端流式输出与渐进揭示的基础。
+
+来源：[React v18](https://react.dev/blog/2022/03/29/react-v18)
+
+### React 19 的增强
+
+React 19 的一个关键变化，是把 `use` 作为正式 API 引入，让“在 render 中读取 Promise 并触发 Suspense”具备更明确的官方语义。这使 Suspense 不再主要依赖框架内部封装或 `lazy` 场景，而是获得了更直接的渲染期资源读取入口。
+
+来源：
+
+- [React v19](https://react.dev/blog/2024/12/05/react-19)
+- [use](https://react.dev/reference/react/use)
+
+因此，从工程心智模型上应当这样理解：
+
+- React 18 建立了 Suspense 在现代渲染和 SSR 中的核心地位
+- React 19 让 Suspense 与 render-time data reading 的连接更直接
+
+## Suspense 与流式 SSR
+
+Suspense 在服务端最重要的价值，不是“也能显示一个 spinner”，而是它把服务端输出拆成了可以渐进发送的边界。
+
+React 官方 `renderToPipeableStream` 文档明确说明：
+
+- 如果某段内容包在 Suspense 边界中且尚未就绪，React 可以先把 fallback 作为 HTML 输出
+- 待该内容稍后准备好，再把真实内容继续流式发送给客户端
+
+最小示例：
+
+```tsx
+import { renderToPipeableStream } from 'react-dom/server'
+
+const { pipe } = renderToPipeableStream(<App />, {
+  bootstrapScripts: ['/main.js'],
+  onShellReady() {
+    response.setHeader('content-type', 'text/html')
+    pipe(response)
+  },
+})
+```
+
+这里的一个关键术语是 `shell`。官方文档把“位于所有 Suspense 边界之外、必须先准备好的那部分内容”称为 shell。它决定了用户最早能看到的页面骨架。
+
+来源：[renderToPipeableStream](https://react.dev/reference/react-dom/server/renderToPipeableStream)
+
+## 为什么说 Suspense 改变了 SSR 的输出方式
+
+在没有流式 Suspense 的旧思路里，服务端常常要在“等全部数据准备好再输出”和“立即输出但只能是很弱的初始 HTML”之间取舍。
+
+Suspense 把这个问题改写成了边界问题：
+
+- 壳层内容先输出
+- 边界内未就绪内容先输出 fallback
+- 就绪后再逐段补齐真实内容
+
+这也是 React 18 之后流式 SSR 的核心价值所在：  
+它不要求整页都准备完，才开始让用户看到内容。
+
+## Suspense 与 Hydration
+
+Suspense 不只影响服务端 HTML 输出，也会影响客户端接管交互的过程。
+
+官方资料提到，Suspense 边界可以把服务端渲染出来的内容拆成更细的交互接管单元。这样客户端不必等整棵树一次性都准备完，才能逐步让页面可交互。
+
+这与现代 React 的 hydration 思路是一致的：
+
+- 服务端先输出可见 HTML
+- 客户端按边界逐步接管交互
+- 已经可用的部分可以更早变得可交互
+
+在 React 19 的生态中，`use`、Suspense、Server Components 和流式传输之间的关系也更加紧密。官方 Server Components 文档明确说明：在 Server Component 中 `await`，以及在 Client Component 中通过 `use` 继续等待 Promise，都可以与 Suspense 的流式机制协同工作。
+
+来源：
+
+- [Server Components](https://react.dev/reference/rsc/server-components)
+- [Activity](https://react.dev/reference/react/Activity)
+
+## 服务端错误与客户端重试
+
+Suspense 还有一个常被忽略的服务端行为：  
+如果你使用流式服务端渲染 API，而某个组件在服务端渲染时抛错，React 不一定会直接终止整次渲染。官方文档说明，React 会寻找最近的 Suspense 边界，并把它的 fallback 输出到服务端 HTML 中，然后在客户端再次尝试渲染该组件。
+
+如果客户端也失败，最终由最近的 Error Boundary 接管。  
+如果客户端成功，用户最终看到的仍然是真实内容，而不是服务端阶段的临时错误。
+
+这说明 Suspense 在 SSR 中不仅是“等待时的降级机制”，也是“部分可恢复错误时的隔离机制”。
+
+来源：[\<Suspense>](https://react.dev/reference/react/Suspense)
+
+## 为什么 `renderToString` 不能很好发挥 Suspense
+
+React 官方文档明确指出，`renderToString` 对 Suspense 的支持是有限的。  
+如果某个组件 suspend，`renderToString` 只会在生成的 HTML 中输出最近 Suspense 边界的 fallback，而不会等待内容完成，也不支持像流式 API 那样逐步填充内容。
+
+因此，在现代 React 中，如果你希望 Suspense 真正参与服务端渲染体验，推荐使用：
+
+- `renderToPipeableStream`
+- `renderToReadableStream`
+
+而不是停留在 `renderToString`。
+
+来源：[renderToString](https://react.dev/reference/react-dom/server/renderToString)
+
+## 常见误区
+
+### Suspense 是 React 自带的数据请求库
+
+不是。Suspense 只处理“渲染期等待时如何降级与恢复”。它本身不负责定义请求发起、缓存、去重、失效、重试等完整数据层能力。
+
+### 只要有异步代码就会触发 Suspense
+
+不是。只有 Suspense-enabled source 才会触发边界。放在 `useEffect` 里的请求并不会自动让 Suspense 接管。
+
+### fallback 一定越细越好
+
+不是。Suspense 边界应该对应加载序列，而不是组件粒度。边界过细会让界面呈现过度碎片化的跳动。
+
+### Suspense 会自动避免界面闪烁
+
+不完全正确。是否会把已显示内容替换成 fallback，取决于这次更新是否被标记为 Transition 等非紧急更新。
+
+### Suspense 可以替代 Error Boundary
+
+不能。Suspense 处理等待，Error Boundary 处理错误。Promise 的 pending 和 rejected 是两类完全不同的分支。
+
+### React 19 重新定义了 Suspense
+
+不准确。React 19 延续了 React 18 的边界模型，并通过 `use` 等能力让 Suspense 的使用路径更完整，但没有推翻 React 18 建立的基本工作机制。
+
+## 工程视角下的理解方式
+
+如果把 Suspense 压缩成工程上最重要的判断，可以记住下面几条：
+
+- Suspense 解决的是“渲染期暂时无法继续时，界面如何降级”
+- fallback 是 render 失败后的正式分支结果，不是副作用补丁
+- 已揭示内容是否退回 fallback，与 Transition 直接相关
+- 边界设计应对应用户感知到的加载序列
+- React 18 让 Suspense 成为流式 SSR 的核心基础
+- React 19 通过 `use` 让 Suspense 与 render-time data reading 的连接更加直接
+
+## 文末速查
+
+| 概念                     | 一句话定义                                        |
+| ------------------------ | ------------------------------------------------- |
+| `Suspense`               | 声明渲染期等待边界的组件                          |
+| `fallback`               | 当前边界子树暂不可用时先提交的备用界面            |
+| 触发来源                 | `lazy`、`use`、Suspense-enabled 框架数据源        |
+| 不会触发的来源           | `useEffect` 中请求、事件处理函数中的异步逻辑      |
+| 与 Transition 的关系     | Transition 可减少已显示内容被 fallback 替换的概率 |
+| 与 Error Boundary 的关系 | Suspense 处理等待，Error Boundary 处理错误        |
+| 与 SSR 的关系            | Suspense 边界是流式输出和渐进揭示的基础单元       |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Suspense 的本质不是“显示加载中”，而是 React 在渲染期遇到等待时，用边界来组织降级、恢复、重试和渐进揭示的机制。

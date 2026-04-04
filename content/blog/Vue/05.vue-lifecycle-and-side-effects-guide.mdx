@@ -1,0 +1,276 @@
+---
+title: 生命周期与副作用
+category: vue
+excerpt: 围绕 onMounted、onUpdated、onUnmounted、watch 与副作用清理，系统讲清 Vue 3 中副作用应该放在哪里、何时执行以及如何组织。
+slug: vue-3-lifecycle-and-side-effects
+tags: [Vue 3, Lifecycle, watch, Side Effects, onMounted]
+---
+
+{/* @format */}
+
+# Vue 3 生命周期与副作用详解
+
+现代 Vue 3 开发里，一个组件是否稳定，往往不取决于模板写得多漂亮，而取决于副作用有没有被放到正确的位置。请求该在哪里发？什么时候可以读 DOM？监听器该何时清理？哪些逻辑应该是 `computed`，哪些才应该进入 `watch` 或生命周期钩子？这些问题如果边界不清晰，组件很快就会出现重复请求、内存泄漏、状态错乱和时机误判。
+
+这篇文章的重点是建立一条明确主线：**生命周期钩子负责组件阶段性时机，`watch` 负责状态变化后的副作用，二者共同构成 Vue 组件里的副作用组织体系。**
+
+## 先区分三类逻辑
+
+在进入具体 API 前，先把组件里的逻辑分成三类：
+
+- 渲染用数据：放在 `ref` / `reactive` / `computed`
+- 状态变化后的副作用：放在 `watch` / `watchEffect`
+- 与组件挂载、更新、卸载阶段有关的副作用：放在生命周期钩子
+
+一旦把这三类逻辑混在一起，组件就会开始失去边界。
+
+## 生命周期钩子到底在解决什么
+
+Vue 组件不是一次性执行完就结束的函数，而是经历“创建、挂载、更新、卸载”等阶段的长期对象。生命周期钩子的作用，就是让你在这些阶段的关键时机介入。
+
+在 Composition API 中，这些时机主要通过函数形式暴露，例如：
+
+- `onMounted`
+- `onUpdated`
+- `onUnmounted`
+
+它们解决的不是“状态变化”本身，而是“组件处于哪个阶段”。
+
+来源：[Lifecycle Hooks](https://vuejs.org/guide/essentials/lifecycle.html)
+
+## onMounted
+
+一句话定义：`onMounted()` 会在组件初次挂载完成、对应 DOM 已经创建后执行。
+
+它解决什么问题：有些逻辑只能在组件真正进入页面之后再做，例如读取 DOM、初始化第三方实例、开始非立即渲染依赖的副作用。
+
+什么时候用：
+
+- DOM 测量
+- 聚焦输入框
+- 初始化图表、编辑器、地图等第三方实例
+- 发起和页面挂载强相关的首次副作用
+
+```vue
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+
+const inputRef = ref<HTMLInputElement | null>(null)
+
+onMounted(() => {
+  inputRef.value?.focus()
+})
+</script>
+
+<template>
+  <input ref="inputRef" />
+</template>
+```
+
+常见注意点：`onMounted` 适合“组件已挂载后”的逻辑，但不代表所有首次请求都必须写在这里。如果请求更适合作为对某个明确状态源的响应，`watch` 会更可控。来源：[Lifecycle Hooks](https://vuejs.org/guide/essentials/lifecycle.html)
+
+## onUpdated
+
+一句话定义：`onUpdated()` 会在组件由于响应式状态变化完成一次 DOM 更新后执行。
+
+它解决什么问题：当你确实需要在“本轮更新后的 DOM”上执行某些动作时，`onUpdated` 提供了阶段钩子。
+
+什么时候用：
+
+- 某些更新后必须读取最新 DOM
+- 和第三方 DOM 库做同步
+
+```vue
+<script setup lang="ts">
+import { onUpdated, ref } from 'vue'
+
+const count = ref(0)
+
+onUpdated(() => {
+  console.log('dom updated after count change')
+})
+</script>
+
+<template>
+  <button @click="count += 1">{{ count }}</button>
+</template>
+```
+
+常见注意点：Vue 官方明确不建议在 `onUpdated` 中直接继续修改组件状态，否则很容易进入更新循环。它更适合观察或同步，而不是再发起新一轮本地状态写入。来源：[Lifecycle Hooks](https://vuejs.org/guide/essentials/lifecycle.html)
+
+## onUnmounted
+
+一句话定义：`onUnmounted()` 会在组件被移除前后，用于清理该组件创建的外部副作用。
+
+它解决什么问题：组件离开页面后，之前注册的定时器、事件监听、第三方实例或订阅关系必须被释放，否则会造成泄漏和脏状态。
+
+什么时候用：
+
+- 清理 `setInterval`
+- 卸载窗口事件监听
+- 销毁图表、编辑器、socket 连接
+
+```vue
+<script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
+
+function handleResize() {
+  console.log(window.innerWidth)
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+})
+</script>
+```
+
+常见注意点：凡是你在组件里“手动注册”的外部资源，大概率都需要在 `onUnmounted` 里对应清理。来源：[Lifecycle Hooks](https://vuejs.org/guide/essentials/lifecycle.html)
+
+## watch 是副作用主线，不是生命周期替代品
+
+`watch` 解决的核心问题，不是“组件现在处于什么阶段”，而是“某个明确状态源变化了，我要不要做额外动作”。
+
+这意味着 `watch` 比生命周期钩子更适合很多业务副作用场景，例如：
+
+- 关键词变化后重新请求
+- 路由参数变化后加载详情
+- 某个开关变化后同步本地存储
+
+```vue
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+
+const userId = ref('1')
+const user = ref<null | { id: string; name: string }>(null)
+
+watch(
+  userId,
+  async (id) => {
+    const response = await fetch(`/api/users/${id}`)
+    user.value = await response.json()
+  },
+  { immediate: true },
+)
+</script>
+```
+
+这里真正的副作用来源不是“组件挂载了”，而是“当前需要展示哪个 userId 对应的数据”。这类逻辑写成 `watch` 会比只在 `onMounted` 里写一次更符合真实依赖关系。
+
+来源：[Watchers](https://vuejs.org/guide/essentials/watchers)
+
+## immediate、深度监听和清理
+
+在真实项目里，`watch` 常见的三个增强点分别是：
+
+### `immediate`
+
+让监听器在初始化时先执行一次，适合“首次进入也要做同样副作用”的场景。
+
+### 深度监听
+
+当监听源是对象且你需要感知内部嵌套变化时可以开启，但它应该被谨慎使用，因为深度监听扩大了依赖范围和更新成本。
+
+### 清理逻辑
+
+当一个监听器会启动异步任务、定时器或订阅时，应在后续变化或组件卸载前清理旧任务。
+
+```vue
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+
+const keyword = ref('')
+
+watch(keyword, (nextKeyword, _prevKeyword, onCleanup) => {
+  const timer = window.setTimeout(() => {
+    console.log('search ->', nextKeyword)
+  }, 300)
+
+  onCleanup(() => {
+    clearTimeout(timer)
+  })
+})
+</script>
+```
+
+这类写法的意义在于：副作用不仅要“能触发”，还要“能正确失效”。
+
+## watchEffect 的定位
+
+`watchEffect` 更适合依赖来源较多、又不想手动枚举依赖的轻量副作用。
+
+```ts
+watchEffect(() => {
+  console.log(route.params.id, locale.value, permissions.value)
+})
+```
+
+但在业务场景中，越是重要的副作用，通常越应该让依赖来源保持明确。也因此：
+
+- 快速建立轻量依赖映射，可考虑 `watchEffect`
+- 依赖明确、需要严格控制与清理的副作用，优先 `watch`
+
+## 哪些事情不该写进生命周期
+
+生命周期钩子很容易被滥用成“副作用垃圾桶”。以下几类逻辑通常不应优先往生命周期钩子里堆：
+
+- 纯派生值计算
+- 可直接由状态推导出的展示逻辑
+- 对某个明确状态源变化的响应型副作用
+
+这些场景更适合：
+
+- `computed`
+- `watch`
+- `watchEffect`
+
+生命周期真正擅长的是“组件阶段时机”，不是替代一切反应式逻辑。
+
+## 一个更稳定的工程判断
+
+可以用下面的判断顺序：
+
+1. 这段逻辑是不是纯计算  
+   如果是，用 `computed`
+2. 这段逻辑是不是某个状态变化后的副作用  
+   如果是，用 `watch`
+3. 这段逻辑是不是依赖组件挂载 / 卸载阶段  
+   如果是，用生命周期钩子
+
+这个顺序能显著减少“所有东西都先塞 onMounted”带来的混乱。
+
+## 常见误区
+
+### 把所有首次请求都写在 onMounted
+
+这会让真正的依赖关系被隐藏起来。很多请求本质上依赖 route、props 或筛选条件，写成 `watch(..., { immediate: true })` 往往更清晰。
+
+### 在 onUpdated 里继续改状态
+
+这很容易引发无意义的重复更新，甚至更新循环。
+
+### 监听器不做清理
+
+定时器、请求、防抖、订阅如果不清理，组件切换后就会留下隐蔽问题。
+
+### 用 watch 代替 computed
+
+派生值与副作用混在一起，是组件失控的常见起点。
+
+## 文末速查
+
+| 场景                           | 优先想到的能力 |
+| ------------------------------ | -------------- |
+| DOM 挂载后再做事               | `onMounted`    |
+| DOM 更新后观察结果             | `onUpdated`    |
+| 组件离开时清理资源             | `onUnmounted`  |
+| 某个明确状态源变化后触发副作用 | `watch`        |
+| 依赖项较多的轻量副作用         | `watchEffect`  |
+| 纯派生结果                     | `computed`     |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> 生命周期钩子解决“组件处于哪个阶段”，`watch` 解决“状态变化后要做什么”，两者不要混写成同一层逻辑。

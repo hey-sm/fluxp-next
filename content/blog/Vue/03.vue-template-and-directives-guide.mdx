@@ -1,0 +1,278 @@
+---
+title: 模板/指令
+category: vue
+excerpt: 围绕模板语法与内置指令，系统讲清 Vue 3 中最常用的视图表达方式，包括 v-bind、v-on、v-if、v-show、v-for、v-model 与 v-html。
+slug: vue-3-template-and-directives
+tags: [Vue 3, Template, Directives, v-model, v-for]
+---
+
+{/* @format */}
+
+# Vue 3 模板与指令体系
+
+Vue 模板的价值，不在于它“比 JavaScript 更短”，而在于它把视图层的常见操作抽象成了一套声明式表达系统。你不直接写“什么时候创建 DOM、什么时候删除 DOM、什么时候绑定事件”，而是通过模板与指令描述当前状态下界面应该是什么样子。
+
+要真正用好 Vue 模板，关键不是记住所有语法，而是分清每种指令各自控制的是哪一层问题：
+
+- 数据绑定
+- 事件绑定
+- 条件渲染
+- 列表渲染
+- 双向绑定
+- 原始 HTML 注入
+
+这篇文章就围绕这条主线展开。
+
+## 模板不是“简化版 JS”，而是声明式视图层
+
+Vue 官方文档强调，模板语法最终会被编译成渲染函数。也就是说，模板不是运行时魔法，而是一种更适合表达视图结构的上层语法。来源：[Template Syntax](https://vuejs.org/guide/essentials/template-syntax)
+
+这意味着两个很重要的结论：
+
+- 模板层优先表达“结果”
+- 复杂的计算和业务逻辑，仍应尽量回到 `script setup` 里组织
+
+模板适合展示结构、条件、遍历和绑定，不适合承载大量难以维护的表达式。
+
+## v-bind
+
+一句话定义：`v-bind` 用来把 JavaScript 表达式的结果绑定到元素属性或组件 props 上。
+
+它解决什么问题：视图属性不再是写死的字符串，而是能随响应式状态变化自动更新。
+
+什么时候用：
+
+- DOM 属性绑定
+- class / style 动态绑定
+- 组件 props 传值
+
+```vue
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+
+const disabled = ref(false)
+const level = ref<'success' | 'warning'>('success')
+
+const buttonClass = computed(() => ({
+  'is-success': level.value === 'success',
+  'is-warning': level.value === 'warning',
+}))
+</script>
+
+<template>
+  <button :disabled="disabled" :class="buttonClass">提交</button>
+</template>
+```
+
+常见注意点：模板里可以写表达式，但不要把过长的对象字面量、复杂计算、分支逻辑都塞进 `v-bind`。这类逻辑更适合先抽到 `computed`，再把结果绑定给模板。来源：[Class and Style Bindings](https://vuejs.org/guide/essentials/class-and-style)
+
+## v-on
+
+一句话定义：`v-on` 用来监听 DOM 事件或组件自定义事件。
+
+它解决什么问题：把“用户交互发生后该执行什么逻辑”以声明式方式挂接到模板上。
+
+什么时候用：
+
+- 点击、输入、提交、滚动等 DOM 事件
+- 监听子组件 `emit` 出来的自定义事件
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const count = ref(0)
+
+function increment() {
+  count.value += 1
+}
+</script>
+
+<template>
+  <button @click="increment">count: {{ count }}</button>
+</template>
+```
+
+常见注意点：模板里可以直接调用方法，但不要把大段业务逻辑都写进 `@click="..."` 内联表达式。事件处理函数复杂后，应回到脚本区定义命名函数。来源：[Event Handling](https://vuejs.org/guide/essentials/event-handling)
+
+## v-if
+
+一句话定义：`v-if` 用来按条件决定一段模板是否应该真正参与渲染。
+
+它解决什么问题：当某部分 UI 在某些状态下不应该存在时，`v-if` 可以让它直接不进入当前渲染树。
+
+什么时候用：
+
+- 权限控制
+- 弹窗、抽屉、详情面板这类按需显示内容
+- 初始化成本较高、没必要一直保留的子树
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const open = ref(false)
+</script>
+
+<template>
+  <button @click="open = !open">切换</button>
+  <section v-if="open">高级筛选面板</section>
+</template>
+```
+
+常见注意点：`v-if` 是“创建 / 销毁”级别的条件渲染，不只是简单隐藏。频繁切换而结构本身又不重的场景，要考虑 `v-show` 是否更合适。来源：[Conditional Rendering](https://vuejs.org/guide/essentials/conditional)
+
+## v-show
+
+一句话定义：`v-show` 用来控制元素显示与隐藏，但不会销毁它本身。
+
+它解决什么问题：在需要频繁切换可见性，但不希望元素被反复创建和销毁时，`v-show` 更轻量。
+
+什么时候用：
+
+- tab 内容切换
+- 频繁展开 / 收起的小面板
+- 需要保留内部 DOM 状态的区域
+
+```vue
+<template>
+  <aside v-show="true">帮助说明</aside>
+</template>
+```
+
+常见注意点：`v-show` 只是切换 `display`，初始渲染成本仍然存在。因此“首屏几乎不会出现”的重内容区域，不应因为切换频繁的可能性就一律改用 `v-show`。来源：[Conditional Rendering](https://vuejs.org/guide/essentials/conditional)
+
+## v-if 与 v-show 怎么选
+
+可以用一个非常稳定的判断：
+
+- 初始不一定需要、内容较重、切换不频繁：`v-if`
+- 初始就要渲染、只是频繁显示隐藏：`v-show`
+
+不要把它们理解成语法偏好，而要理解成两种不同的渲染成本模型。
+
+## v-for
+
+一句话定义：`v-for` 用来根据数组或可迭代数据渲染一组重复结构。
+
+它解决什么问题：把“根据数据生成列表 UI”从命令式循环 DOM 操作变成声明式结构映射。
+
+什么时候用：
+
+- 列表页
+- 菜单、标签、卡片组
+- 表格行和嵌套内容结构
+
+```vue
+<script setup lang="ts">
+const users = [
+  { id: 1, name: 'Ada' },
+  { id: 2, name: 'Linus' },
+]
+</script>
+
+<template>
+  <ul>
+    <li v-for="user in users" :key="user.id">
+      {{ user.name }}
+    </li>
+  </ul>
+</template>
+```
+
+常见注意点：Vue 官方明确要求在 `v-for` 中尽可能提供稳定的 `key`。不要默认使用索引当 `key`，尤其当列表会插入、删除、排序或列表项内部有状态时。来源：[List Rendering](https://vuejs.org/guide/essentials/list)
+
+## v-model
+
+一句话定义：`v-model` 是表单值和组件值之间的双向绑定语法糖。
+
+它解决什么问题：把“值传入 + 更新事件回传”这组高频模式压缩成统一语法。
+
+什么时候用：
+
+- 输入框、复选框、单选、选择器
+- 自定义表单组件
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const keyword = ref('')
+</script>
+
+<template>
+  <input v-model="keyword" placeholder="请输入关键词" />
+  <p>{{ keyword }}</p>
+</template>
+```
+
+常见注意点：`v-model` 看起来像“直接改值”，但在组件上本质仍然是 `modelValue` + `update:modelValue` 协作机制。它简化的是模板写法，不是数据流方向。来源：[Form Input Bindings](https://vuejs.org/guide/essentials/forms) 和 [Component v-model](https://vuejs.org/guide/components/v-model)
+
+## v-html
+
+一句话定义：`v-html` 用来把一段字符串按原始 HTML 插入到元素内部。
+
+它解决什么问题：当你需要渲染后端返回的富文本 HTML 片段时，普通插值会把它当文本处理，此时需要 `v-html`。
+
+什么时候用：
+
+- 已经过滤或可信的富文本片段
+- CMS 或 Markdown 转换后的 HTML 输出
+
+```vue
+<script setup lang="ts">
+const content = '<strong>重要提示</strong>'
+</script>
+
+<template>
+  <div v-html="content" />
+</template>
+```
+
+常见注意点：`v-html` 有明显的 XSS 风险。Vue 官方文档明确提醒，只能渲染可信 HTML，绝不要把未经清洗的用户输入直接交给 `v-html`。来源：[Template Syntax](https://vuejs.org/guide/essentials/template-syntax) 和 [Security](https://vuejs.org/guide/best-practices/security)
+
+## 模板层的推荐组织方式
+
+要写出稳定的 Vue 模板，关键不是追求“模板里一行写完”，而是控制模板和脚本的职责边界：
+
+- 模板负责结构、绑定、条件和遍历
+- 派生逻辑放 `computed`
+- 副作用放 `watch` 或生命周期钩子
+- 复杂事件逻辑放命名函数
+- 风险内容如 HTML 注入要显式隔离
+
+模板越像“结构声明”，后续维护成本越低。
+
+## 常见误区
+
+### 在模板里写过多复杂逻辑
+
+模板表达式过长后，可读性和调试性都会迅速下降。只要一段逻辑已经不像“视图声明”，就应该回到脚本区重构。
+
+### 频繁切换场景一律用 v-if
+
+这会把很多本该保留的 DOM 子树反复创建和销毁，增加无意义更新。
+
+### 列表渲染不写 key
+
+短期能跑，但会让后续更新行为不可预测，也不利于组件状态稳定。
+
+### 把 v-model 当成双向数据流特权
+
+它只是受控输入协作的语法糖，并不改变单向数据流和事件回传的本质。
+
+## 文末速查
+
+| 需求                          | 优先想到的指令 |
+| ----------------------------- | -------------- |
+| 绑定属性、class、style、props | `v-bind`       |
+| 绑定事件                      | `v-on`         |
+| 按条件创建 / 销毁内容         | `v-if`         |
+| 仅切换显示隐藏                | `v-show`       |
+| 渲染列表                      | `v-for`        |
+| 表单双向绑定                  | `v-model`      |
+| 渲染可信 HTML 片段            | `v-html`       |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Vue 模板层最重要的不是语法数量，而是把“结构表达”与“业务逻辑”清晰分层。

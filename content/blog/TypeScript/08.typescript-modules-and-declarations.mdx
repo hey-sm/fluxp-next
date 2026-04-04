@@ -1,0 +1,254 @@
+---
+title: 模块与声明文件
+category: ts
+excerpt: 从模块边界、export type、import type 到 .d.ts、模块声明与第三方包类型接入，系统讲清 TypeScript 在项目与库中的类型组织方式。
+slug: typescript-modules-and-declarations
+tags: [TypeScript, Modules, Declaration Files, import type, dts]
+---
+
+{/* @format */}
+
+# TypeScript 模块与声明文件体系
+
+很多开发者在学习 TypeScript 时，把注意力几乎全部放在“怎么写类型”上，却忽略了另一个同样关键的问题：类型应该如何组织、暴露、复用与接入。真正进入项目规模之后，类型系统的难点往往不再是某个语法点，而是模块边界和声明文件管理。
+
+这篇文章讨论的不是 JavaScript 模块基础本身，而是 TypeScript 如何在模块系统之上组织类型信息，包括类型导入导出、声明文件、第三方包类型接入和常见工程判断。
+
+官方文档主线参考：
+
+- [Modules - Introduction](https://www.typescriptlang.org/docs/handbook/modules/introduction.html)
+- [Declaration Files - Introduction](https://www.typescriptlang.org/docs/handbook/declaration-files/introduction.html)
+
+## 为什么模块与声明文件很重要
+
+TypeScript 的价值并不只发生在单文件内部。一个真实项目至少会遇到下面这些问题：
+
+- 类型应该定义在业务文件里，还是单独抽到模块里
+- 一个导出到底是值、类型，还是二者兼有
+- 第三方包没有类型声明时怎么接入
+- 自己写的工具库应该如何暴露类型
+- 什么时候需要 `.d.ts`，什么时候不需要
+
+如果这些边界不清晰，项目即使有很多类型标注，也会逐渐出现重复、漂移和导入混乱。
+
+## 模块是什么
+
+一句话定义：在 TypeScript 里，只要文件中出现 `import` 或 `export`，它就会被视为模块，拥有自己的作用域和导入导出边界。
+
+它解决什么问题：模块让代码与类型都可以围绕文件边界组织，不会把所有定义堆在全局作用域里。
+
+什么时候用：
+
+- 任何现代前端工程
+- 组件、工具函数、配置、类型定义的拆分
+- 库代码与业务代码的组织
+
+```ts
+export function formatPrice(value: number) {
+  return `¥${value.toFixed(2)}`
+}
+
+export type PriceUnit = 'cny' | 'usd'
+```
+
+常见注意点：模块不是 TypeScript 特有概念，但 TypeScript 在模块层面同时追踪值和类型，因此“导出了什么”会比纯 JavaScript 更重要。来源：[Modules - Introduction](https://www.typescriptlang.org/docs/handbook/modules/introduction.html)
+
+## 值导出与类型导出
+
+一句话定义：TypeScript 会区分运行时值导出和纯类型导出，虽然二者都使用 `export` 语义，但它们参与编译和运行时的方式不同。
+
+它解决什么问题：如果不区分值和类型，项目里会出现无效导入、误用类型当值、打包结果混乱等问题。
+
+```ts
+export interface User {
+  id: string
+  name: string
+}
+
+export type RequestStatus = 'idle' | 'loading' | 'success' | 'error'
+
+export const DEFAULT_PAGE_SIZE = 20
+```
+
+这里：
+
+- `User` 和 `RequestStatus` 只存在于类型层
+- `DEFAULT_PAGE_SIZE` 是运行时真正存在的值
+
+常见注意点：同一个标识符在 TypeScript 中有时既能代表类型，也能代表值，例如类和枚举；但大多数接口、类型别名只存在于类型空间。
+
+## import type 与 export type
+
+一句话定义：`import type` 和 `export type` 用于显式表达“这里只处理类型，不涉及运行时值”。
+
+它解决什么问题：在大型工程和现代构建链路中，显式区分类型导入可以减少歧义，并帮助工具链更稳定地移除无用运行时代码。
+
+什么时候用：
+
+- 只需要导入类型，不需要导入值
+- 组件 props、返回值、DTO 类型复用
+- 库代码暴露公共类型接口
+
+```ts
+import type { User } from './user'
+
+export type { User }
+```
+
+常见注意点：`import type` 是现代 TypeScript 项目非常推荐的语义化写法。它的价值不只是“更严谨”，还在于让代码读者一眼看出这个导入不会出现在运行时。来源：[Type-only Imports and Export](https://www.typescriptlang.org/docs/handbook/modules/reference.html)
+
+## 模块边界中的类型设计
+
+在工程里，类型组织通常有三种常见方式：
+
+- 跟随业务模块 colocate：类型和实现写在同一个文件或同一目录
+- 抽独立 `types.ts`：当多个实现共享某组类型时集中管理
+- 公共领域模型单独模块化：如 `models/user.ts`、`schemas/order.ts`
+
+更稳定的判断不是“一律抽出去”，而是：
+
+- 类型只服务于单个实现时，优先就近放置
+- 类型成为跨模块契约时，再抽离为独立导出
+- 公共类型命名要体现领域语义，而不是只叫 `Data`、`Item`、`Info`
+
+## 声明文件是什么
+
+一句话定义：声明文件通常以 `.d.ts` 结尾，用于只描述类型信息而不包含具体实现。
+
+它解决什么问题：有些库的实现代码并不由 TypeScript 编译，或者你只需要向编译器声明某个模块、全局变量、资源文件的类型，这时声明文件就是桥梁。
+
+什么时候用：
+
+- 为没有类型的第三方包补类型
+- 为静态资源模块声明类型
+- 为全局变量、环境变量、全局扩展补充定义
+
+```ts
+declare module '*.svg' {
+  const src: string
+  export default src
+}
+```
+
+常见注意点：`.d.ts` 文件只提供类型信息，不会生成运行时代码。不要把业务逻辑写进声明文件。来源：[Declaration Files - Introduction](https://www.typescriptlang.org/docs/handbook/declaration-files/introduction.html)
+
+## declare 的作用
+
+一句话定义：`declare` 用来告诉 TypeScript“这个东西在运行时会存在，请只为它建立类型认知，不要生成实现”。
+
+它解决什么问题：很多运行时对象来自外部环境，例如浏览器注入、构建工具注入、全局脚本或第三方库，而 TypeScript 本身并不知道它们的形态。
+
+```ts
+declare const __APP_VERSION__: string
+```
+
+常见注意点：`declare` 不是创建变量，而是声明已有存在。它适合补类型认知，不适合伪造不存在的运行时对象。
+
+## 第三方包类型接入
+
+真实项目里最常见的问题之一是：安装了一个包，但它没有类型，或者类型不完整。处理顺序通常应该是：
+
+1. 先确认包本身是否内置类型
+2. 如果没有，再确认是否存在 `@types/xxx`
+3. 如果仍然没有，再写本地声明文件兜底
+
+例如：
+
+```ts
+declare module 'legacy-sdk' {
+  export function init(token: string): void
+}
+```
+
+这类本地声明的目标是先把工程接上，而不是一开始就把第三方包全部精确建模。随着使用加深，再逐步收紧声明即可。
+
+## 全局声明与模块声明
+
+一句话定义：声明文件既可以声明某个模块，也可以扩展全局作用域或已有全局接口。
+
+它解决什么问题：某些类型不是通过 import 获得，而是直接出现在全局环境中，例如 `Window` 扩展、环境变量、测试运行时注入对象。
+
+```ts
+declare global {
+  interface Window {
+    analytics?: {
+      track: (event: string) => void
+    }
+  }
+}
+
+export {}
+```
+
+常见注意点：全局扩展要非常克制。它会影响整个项目的类型环境，滥用后很容易让来源不清、边界模糊的问题蔓延。
+
+## 模块声明的典型场景
+
+### 静态资源
+
+例如图片、SVG、样式模块。如果构建工具允许 `import logo from './logo.svg'`，TypeScript 也需要知道这个模块的类型。
+
+### 无类型旧 SDK
+
+老项目、浏览器脚本包、内部工具包没有官方类型时，可以先通过声明文件建立最小可用契约。
+
+### 运行时注入对象
+
+如果某个对象由 HTML 模板、插件系统或打包注入，你需要用声明文件补齐它的类型认知。
+
+## 第三方库的声明文件为什么重要
+
+当你安装一个有完整类型声明的库时，你得到的不只是编辑器提示，而是一份正式契约：
+
+- 哪些 API 可以调用
+- 参数是什么形状
+- 返回值是什么结构
+- 哪些能力只在类型层存在
+
+这也是为什么现代 TypeScript 生态里，库的类型质量已经成为可用性的重要组成部分。
+
+## 工程中的推荐组织方式
+
+一个相对稳定的前端项目做法通常是：
+
+- 业务模块类型就近定义
+- 跨模块共享类型统一导出
+- 纯类型导入优先使用 `import type`
+- 项目级声明文件集中放在容易识别的位置，如 `types/` 或根目录声明文件
+- 第三方无类型依赖先用最小声明接入，再逐步细化
+
+重点不是“文件一定怎么放”，而是让类型来源清晰、职责稳定、导入语义明确。
+
+## 常见误区
+
+### 误区一：所有类型都应该单独抽到 `types.ts`
+
+这会制造很多脱离上下文的类型文件。类型如果只服务于单一实现，就近定义通常更可维护。
+
+### 误区二：`.d.ts` 是高级写法，越多越好
+
+声明文件是为“没有实现但需要类型认知”的场景服务的，不是日常业务类型定义的默认容器。
+
+### 误区三：`import type` 可有可无
+
+在小文件里它可能看不出差异，但在大型项目和公共库里，显式区分类型导入能显著减少歧义和维护成本。
+
+### 误区四：给第三方包写一个 `any` 声明就算解决了
+
+这只是让编译器闭嘴。更稳妥的做法是至少从你真正用到的 API 开始，逐步写出最小可用但语义清晰的声明。
+
+## 文末速查
+
+| 问题                       | 优先想到的能力                     |
+| -------------------------- | ---------------------------------- |
+| 组织文件间的类型与实现边界 | 模块导入导出                       |
+| 只导入类型、不引入运行时值 | `import type`                      |
+| 只导出类型                 | `export type`                      |
+| 为无实现对象补类型认知     | `declare`                          |
+| 为无类型模块补声明         | `.d.ts` + `declare module`         |
+| 扩展全局对象类型           | `declare global`                   |
+| 接入第三方包类型           | 内置类型 / `@types` / 本地声明文件 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> TypeScript 项目的可维护性，不只取决于你会不会写类型，还取决于你是否把类型放在了清晰、稳定、可复用的模块边界上。

@@ -1,0 +1,348 @@
+---
+title: Ref
+category: react
+excerpt: 系统讲清 React 18 与 React 19 中 ref 的常见场景、useRef、forwardRef、ref as prop 与 useImperativeHandle。
+slug: react-ref-guide
+tags: [React 18, React 19, Ref, useRef, forwardRef]
+---
+
+{/* @format */}
+
+# React 18 与 React 19 中 Ref 的用法指南
+
+`ref` 一直都是 React 里的标准能力，但它从来不是“第二套状态系统”。它更像一个逃生舱口：当你需要访问 DOM、保存不会触发重渲染的值，或者暴露命令式能力时，`ref` 才应该出场。
+
+这篇文章按 React 18 和 React 19 两个阶段来讲，重点回答这些问题：
+
+- `useRef` 到底适合存什么
+- 什么时候该拿 `ref` 操作 DOM
+- React 18 里的 `forwardRef` 是怎么工作的
+- React 19 为什么可以直接把 `ref` 当成 prop
+- `useImperativeHandle` 应该怎么用，什么时候不该用
+
+## 先记住 Ref 的核心定位
+
+在 React 官方文档里，refs 被定义为“不会参与渲染的数据引用”，适合保存 DOM 节点、超时 ID 或第三方实例等信息。更新 `ref.current` 不会触发重新渲染。来源：[Built-in React Hooks](https://react.dev/reference/react/hooks) 和 [useRef](https://react.dev/reference/react/useRef)。
+
+所以可以先记住两个判断标准：
+
+- 这个值变化后要不要立刻反映到 UI 上
+  如果要，用 state
+- 这个值是不是为了操作 DOM 或保存命令式对象
+  如果是，用 ref
+
+## React 18 中的 Ref 用法
+
+React 18 里的 ref 主线非常稳定：`useRef` 保存引用，组件之间需要转发 ref 时使用 `forwardRef`，需要定制暴露能力时配合 `useImperativeHandle`。
+
+### useRef：保存 DOM 节点
+
+它解决什么问题：在函数组件里拿到真实 DOM 节点，用于聚焦、滚动、测量尺寸等操作。
+
+```tsx
+import { useEffect, useRef } from 'react'
+
+export function SearchInput() {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  return <input ref={inputRef} placeholder="请输入关键词" />
+}
+```
+
+适用场景：
+
+- 页面加载后自动聚焦
+- 滚动到某个元素
+- 获取元素尺寸
+- 对接浏览器原生 API
+
+注意点：访问 DOM 往往意味着你正在做命令式操作，能用声明式 props 表达时，还是优先用 props。
+
+### useRef：保存不会触发重渲染的值
+
+它解决什么问题：跨多次渲染保存一个稳定容器，但不把这个值纳入 UI 响应式更新。
+
+```tsx
+import { useRef } from 'react'
+
+export function Stopwatch() {
+  const timerRef = useRef<number | null>(null)
+
+  function start() {
+    timerRef.current = window.setInterval(() => {
+      console.log('tick')
+    }, 1000)
+  }
+
+  function stop() {
+    if (timerRef.current !== null) {
+      clearInterval(timerRef.current)
+    }
+  }
+
+  return (
+    <div>
+      <button onClick={start}>开始</button>
+      <button onClick={stop}>停止</button>
+    </div>
+  )
+}
+```
+
+适用场景：
+
+- 定时器 ID
+- 第三方实例对象
+- 上一次值
+- 请求取消句柄
+
+注意点：如果你把会影响界面的数据放进 `ref.current`，界面不会自动刷新，这是最常见的误区。
+
+### React 18 里的 forwardRef
+
+它解决什么问题：让父组件可以把 `ref` 传到子组件内部的 DOM 节点或自定义句柄上。
+
+在 React 18 里，函数组件默认不能直接接收 `ref`，所以要使用 `forwardRef`：
+
+```tsx
+import { forwardRef } from 'react'
+
+type InputProps = {
+  placeholder?: string
+}
+
+export const MyInput = forwardRef<HTMLInputElement, InputProps>(function MyInput(
+  { placeholder = '请输入内容' },
+  ref,
+) {
+  return <input ref={ref} placeholder={placeholder} />
+})
+```
+
+适用场景：
+
+- 封装输入框但仍允许外部 `focus()`
+- UI 组件库里的 button、input、dialog 等基础组件
+- 父组件需要访问子组件底层 DOM
+
+注意点：`forwardRef` 是 React 18 的标准写法，但它会让类型和组件声明多一层包装，读起来没有普通函数直观。
+
+### useImperativeHandle：定制暴露给父组件的能力
+
+它解决什么问题：不是把整个 DOM 都暴露出去，而是只暴露你想让父组件调用的方法。
+
+```tsx
+import { forwardRef, useImperativeHandle, useRef } from 'react'
+
+type InputHandle = {
+  focus: () => void
+  clear: () => void
+}
+
+type MyInputProps = {
+  placeholder?: string
+}
+
+export const MyInput = forwardRef<InputHandle, MyInputProps>(function MyInput(
+  { placeholder = '请输入内容' },
+  ref,
+) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus() {
+        inputRef.current?.focus()
+      },
+      clear() {
+        if (inputRef.current) {
+          inputRef.current.value = ''
+        }
+      },
+    }),
+    [],
+  )
+
+  return <input ref={inputRef} placeholder={placeholder} />
+})
+```
+
+适用场景：
+
+- 暴露 `focus()`、`clear()`、`scrollIntoView()` 这类命令式能力
+- 控制复杂表单组件或编辑器组件
+
+注意点：React 官方明确提醒不要过度使用 refs。如果某个能力可以通过 props 表达，例如 `isOpen`、`value`、`onChange`，优先用 props，而不是暴露 `{ open, close }` 这类命令式接口。来源：[useImperativeHandle](https://react.dev/reference/react/useImperativeHandle)。
+
+## React 19 中的 Ref 新变化
+
+React 19 最重要的变化不是 `useRef` 本身，而是函数组件接收 `ref` 的方式更自然了。
+
+### ref as prop：函数组件可以直接接收 ref
+
+React 19 官方说明：函数组件里现在可以直接把 `ref` 当成 prop 使用，新函数组件不再必须依赖 `forwardRef`，未来 `forwardRef` 会被弃用。来源：[React 19](https://react.dev/blog/2024/12/05/react-19) 和 [forwardRef](https://react.dev/reference/react/forwardRef)。
+
+这意味着 React 19 里你可以这样写：
+
+```tsx
+type InputProps = {
+  placeholder?: string
+  ref?: React.Ref<HTMLInputElement>
+}
+
+export function MyInput({ placeholder = '请输入内容', ref }: InputProps) {
+  return <input ref={ref} placeholder={placeholder} />
+}
+```
+
+它带来的直接变化：
+
+- 组件声明更像普通函数
+- 少一层 `forwardRef(...)` 包装
+- 类型书写更贴近普通 props
+
+注意点：这是 React 19 对函数组件的现代写法。React 18 项目里还不能直接这样写。
+
+### React 19 中的 useImperativeHandle
+
+`useImperativeHandle` 本身没有被移除，但它在 React 19 里会和“ref 作为 prop”一起工作，写法更顺。
+
+```tsx
+import { useImperativeHandle, useRef } from 'react'
+
+type EditorHandle = {
+  focus: () => void
+  reset: () => void
+}
+
+type EditorProps = {
+  ref?: React.Ref<EditorHandle>
+}
+
+export function Editor({ ref }: EditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus() {
+        textareaRef.current?.focus()
+      },
+      reset() {
+        if (textareaRef.current) {
+          textareaRef.current.value = ''
+        }
+      },
+    }),
+    [],
+  )
+
+  return <textarea ref={textareaRef} />
+}
+```
+
+注意点：React 19 改善的是“接收 ref 的方式”，不是鼓励你更频繁地写命令式组件。`useImperativeHandle` 仍然应该是少数场景下的工具。
+
+### React 18 与 React 19 在 ref 写法上的差异
+
+| 场景             | React 18                           | React 19                            |
+| ---------------- | ---------------------------------- | ----------------------------------- |
+| 组件内部保存引用 | `useRef`                           | `useRef`                            |
+| 引用 DOM 节点    | `ref + useRef`                     | `ref + useRef`                      |
+| 函数组件接收 ref | `forwardRef`                       | 直接 `ref as prop`                  |
+| 定制暴露句柄     | `forwardRef + useImperativeHandle` | `ref as prop + useImperativeHandle` |
+| 新项目推荐       | `forwardRef` 是标准方案            | 普通函数组件 + `ref` prop 更现代    |
+
+## 什么时候该用 Ref，什么时候不该用
+
+### 适合用 ref 的场景
+
+- 聚焦输入框
+- 滚动到某个元素
+- 测量 DOM 尺寸
+- 保存定时器、第三方实例、AbortController
+- 暴露极少量命令式能力
+
+### 不适合用 ref 的场景
+
+- 用来保存会直接影响 UI 的状态
+- 代替 props 做组件间通信
+- 代替 state 管表单值
+- 明明可以声明式表达，却硬写成命令式接口
+
+## 常见误区
+
+### 误区一：把 ref 当成不会触发渲染的 state
+
+这是最常见的问题。`ref.current` 更新后组件不会重渲染，所以它不能替代 `useState`。
+
+```tsx
+import { useRef } from 'react'
+
+export function WrongCounter() {
+  const countRef = useRef(0)
+
+  return (
+    <button
+      onClick={() => {
+        countRef.current += 1
+      }}
+    >
+      当前值：{countRef.current}
+    </button>
+  )
+}
+```
+
+上面这段代码里的数字不会按预期刷新，因为它没有触发重新渲染。
+
+### 误区二：能用 props，却用 ref 暴露命令式 API
+
+例如弹窗组件，与其暴露：
+
+```tsx
+modalRef.current?.open()
+modalRef.current?.close()
+```
+
+更推荐写成：
+
+```tsx
+<Modal isOpen={isOpen} onOpenChange={setIsOpen} />
+```
+
+声明式接口通常更可预测，也更符合 React 的数据流。
+
+### 误区三：为了“高级感”滥用 useImperativeHandle
+
+`useImperativeHandle` 不是高级组件的标配。只有当父组件确实需要一小组命令式能力时，才值得使用。
+
+## 从 React 18 迁移到 React 19 时怎么处理 Ref
+
+如果你的项目要从 React 18 逐步升级到 React 19，可以按下面思路理解：
+
+1. `useRef` 的使用方式几乎不变
+2. 旧的 `forwardRef` 组件不会立刻失效，但新代码可以逐步改成 `ref as prop`
+3. `useImperativeHandle` 仍然可用，只是接收 `ref` 的方式更自然
+4. 对业务代码来说，最大的变化是“函数组件的 ref 写法更像普通组件了”
+
+一个很实用的迁移判断标准是：
+
+- 如果组件只是 React 18 兼容层，保留 `forwardRef` 没问题
+- 如果是 React 19 新组件，优先使用 `ref as prop`
+
+## 怎么选 Ref 相关 API
+
+| 目标                          | 优先考虑                              |
+| ----------------------------- | ------------------------------------- |
+| 保存 DOM 节点                 | `useRef`                              |
+| 保存不会触发渲染的值          | `useRef`                              |
+| React 18 中让函数组件接收 ref | `forwardRef`                          |
+| React 19 中让函数组件接收 ref | `ref as prop`                         |
+| 只暴露少量命令式方法          | `useImperativeHandle`                 |
+| 需要驱动 UI 更新              | `useState` / `useReducer`，不要用 ref |

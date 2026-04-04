@@ -1,0 +1,256 @@
+---
+title: 数据获取
+category: nextjs
+excerpt: 围绕服务端 fetch、请求去重、并行与串行、数据库读取、Streaming 与 Suspense，系统讲清 Next.js App Router 中数据获取的主线方式。
+slug: nextjs-data-fetching
+tags: [Next.js, Data Fetching, fetch, Suspense, Streaming]
+---
+
+{/* @format */}
+
+# Next.js 数据获取
+
+App Router 彻底改变了 Next.js 的数据获取心智。它不再鼓励把页面数据统一塞进某个页面级专用函数，而是把数据获取拉回组件树本身，尤其是服务端组件。这样做带来的变化非常大：组件可以就近请求数据，请求可以天然和渲染边界、缓存策略、Streaming 结合起来。
+
+这篇文章聚焦现代 App Router 主线，不讨论 `getServerSideProps` 或 `getStaticProps`。目标是建立一个稳定判断框架：数据应该在哪里取，什么时候并行、什么时候串行，`fetch` 和数据库查询分别怎么处理，以及如何和 Suspense、Streaming 协作。
+
+官方文档主线参考：
+
+- [Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+- [Caching and Revalidating](https://nextjs.org/docs/app/getting-started/caching-and-revalidating)
+- [Server and Client Components](https://nextjs.org/docs/app/getting-started/server-and-client-components)
+
+## 先建立一个核心认知
+
+现代 Next.js 的数据获取主线可以概括为：
+
+- 优先在 Server Components 中获取数据
+- 请求默认不缓存，但可显式缓存
+- 相同 `fetch` 会被自动 memoize
+- 对较慢数据结合 Suspense 和 Streaming
+
+它的核心不在“有没有专门的数据获取 API”，而在“把数据获取和组件边界、缓存边界一起考虑”。
+
+## 在 Server Components 中获取数据
+
+一句话定义：Server Components 是 App Router 中最自然的数据获取位置，因为它们本来就运行在服务器端。
+
+它解决什么问题：如果数据本身来自服务端资源，先在服务端组件里获取通常比转一层客户端请求更直接，也更能减少浏览器负担。
+
+什么时候用：
+
+- 页面首次加载数据
+- 列表页、详情页内容
+- 依赖数据库或私有接口的数据
+
+```tsx
+export default async function Page() {
+  const response = await fetch('https://api.vercel.app/blog')
+  const posts = await response.json()
+
+  return (
+    <ul>
+      {posts.map((post: { id: string; title: string }) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+常见注意点：服务端组件获取数据并不意味着一定变成静态页或动态页，最终还要结合请求上下文和缓存策略判断。来源：[Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+
+## fetch 是默认主线
+
+一句话定义：`fetch` 是 Next.js App Router 中获取远程数据的默认入口，并被框架扩展了缓存、重验证和 memoization 语义。
+
+它解决什么问题：相比手动封装一堆网络层约定，Next.js 直接围绕标准 `fetch` 构建渲染与缓存能力，使数据获取和框架主线更一致。
+
+什么时候用：
+
+- 远程 HTTP API
+- CMS 数据
+- BFF 或第三方服务调用
+
+```tsx
+const response = await fetch('https://api.example.com/posts', {
+  next: { revalidate: 3600 },
+})
+```
+
+常见注意点：当前官方文档明确指出，`fetch` 默认不缓存；是否缓存、多久重验证，应由你显式决定。不要沿用旧版本“默认全缓存”的经验。来源：[Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+
+## 请求去重与 memoization
+
+一句话定义：在同一 React 组件树中，相同的 `fetch` 请求会被自动 memoize。
+
+它解决什么问题：多个组件可能都需要同一份数据，如果每个组件都真的发一遍请求，不仅浪费网络，也破坏组件就近取数的优势。
+
+什么时候用：
+
+- 页面多个组件都依赖同一资源
+- layout 和 page 共享某组数据
+
+常见注意点：自动 memoization 解决的是“同一渲染树中相同请求的重复触发”，不等于所有请求都被持久缓存。
+
+## 并行获取
+
+一句话定义：并行获取是指多个互不依赖的数据请求同时发起，以减少整体等待时间。
+
+它解决什么问题：真实页面往往依赖多份资源，如果顺序串行等待，会人为拉长 TTFB 和首屏。
+
+什么时候用：
+
+- 首页聚合多个模块
+- 仪表盘同时请求多个面板数据
+- 页面中的不同数据互不依赖
+
+```tsx
+export default async function Page() {
+  const [postsRes, usersRes] = await Promise.all([
+    fetch('https://api.example.com/posts'),
+    fetch('https://api.example.com/users'),
+  ])
+
+  const [posts, users] = await Promise.all([postsRes.json(), usersRes.json()])
+
+  return <div>{posts.length + users.length}</div>
+}
+```
+
+常见注意点：只要请求之间没有真实依赖，就不应该让它们串行等待。
+
+## 串行获取
+
+一句话定义：串行获取是指后一个请求必须依赖前一个请求结果时，按顺序进行数据读取。
+
+它解决什么问题：某些业务流程天然存在依赖链，例如先拿用户，再根据用户所属组织拉取组织数据。
+
+什么时候用：
+
+- 后一个请求依赖前一个 ID 或权限结果
+- 某个数据必须先经过权限或分流判断
+
+```tsx
+export default async function Page() {
+  const userRes = await fetch('https://api.example.com/me')
+  const user = await userRes.json()
+
+  const teamRes = await fetch(`https://api.example.com/teams/${user.teamId}`)
+  const team = await teamRes.json()
+
+  return <div>{team.name}</div>
+}
+```
+
+常见注意点：串行不是坏事，问题在于是否把本可并行的请求误写成了串行。
+
+## 直接查询数据库或 ORM
+
+一句话定义：App Router 的服务端组件不仅能调用 `fetch`，也可以直接调用数据库、ORM 或内部服务层。
+
+它解决什么问题：如果数据本来就只存在服务端内部，没有必要再为同一应用内部走一层额外 HTTP 请求。
+
+什么时候用：
+
+- 数据库直连
+- ORM 查询
+- 同仓库服务端业务函数
+
+```tsx
+import { db } from '@/lib/db'
+
+export default async function Page() {
+  const posts = await db.post.findMany()
+  return <div>{posts.length}</div>
+}
+```
+
+常见注意点：当你不使用 `fetch` 而直接调用数据库时，就需要自己更清楚地思考缓存边界；否则数据获取会退回“每次都跑查询”的语义。
+
+## Streaming 与 Suspense
+
+一句话定义：当数据获取较慢时，可以通过 Suspense 和 Streaming 让页面先返回可展示部分，再逐步补全其余内容。
+
+它解决什么问题：页面不应该因为某一块慢数据而整体空白等待，Streaming 能把等待感知压缩到局部。
+
+什么时候用：
+
+- 页面有明显的快慢模块差异
+- 某块数据来源较慢但非首要内容
+- 希望在路由切换后尽快看到骨架
+
+```tsx
+import { Suspense } from 'react'
+
+export default function Page() {
+  return (
+    <section>
+      <h1>Dashboard</h1>
+      <Suspense fallback={<div>Loading analytics...</div>}>
+        <AnalyticsPanel />
+      </Suspense>
+    </section>
+  )
+}
+```
+
+常见注意点：Suspense 不是“所有请求都包一下就行”。它最适合快慢明显分层的页面结构。来源：[Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+
+## loading.tsx 与 Suspense 的关系
+
+`loading.tsx` 是路由段级的加载边界，而组件内的 `<Suspense>` 是更细粒度的边界。
+
+更稳的使用方式通常是：
+
+- 页面级或段级体验：`loading.tsx`
+- 页面内部局部慢模块：组件内 `<Suspense>`
+
+二者不是替代关系，而是粒度不同。
+
+## 一个更稳的数据获取顺序
+
+在真实项目里，更稳定的判断顺序通常是：
+
+- 先判断数据是否真的需要进入客户端再取
+- 优先在 Server Components 中就近获取
+- 能并行就并行
+- 依赖链明确时再串行
+- 慢模块单独做 Suspense 边界
+- 需要缓存时再显式补缓存策略
+
+这条顺序的重点，是让“数据在哪里取、什么时候等、什么时候缓存”成为一个整体判断。
+
+## 常见误区
+
+### 误区一：App Router 里仍然应该把所有请求集中到页面级函数
+
+不准确。现代主线是组件就近取数，而不是回到旧的页面级数据函数。
+
+### 误区二：用了 `fetch` 就自动获得合理缓存
+
+不准确。当前文档明确说明 `fetch` 默认不缓存。
+
+### 误区三：服务端组件不能复用数据逻辑
+
+不准确。你完全可以抽离共享服务层或查询函数，只是执行位置仍在服务端。
+
+### 误区四：Suspense 只是加载动画容器
+
+它真正改变的是页面等待策略和渲染顺序，而不仅是 UI 皮肤。
+
+## 文末速查
+
+| 需求 | 优先想到的做法 |
+| --- | --- |
+| 页面首次内容获取 | Server Component 中 `fetch` |
+| 同一树内重复请求同一资源 | 依赖 `fetch` memoization |
+| 多个独立数据源 | 并行获取 |
+| 请求存在依赖链 | 串行获取 |
+| 服务端内部数据 | 数据库 / ORM 直连 |
+| 某块慢数据不应阻塞全页 | Suspense + Streaming |
+| 路由段级加载体验 | `loading.tsx` |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 的数据获取主线，不是“去哪里写请求”，而是“让请求位置、等待边界和缓存策略同时正确”。

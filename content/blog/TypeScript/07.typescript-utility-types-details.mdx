@@ -1,0 +1,309 @@
+---
+title: 工具类型
+category: ts
+excerpt: 围绕 Partial、Required、Readonly、Pick、Omit、Record、Exclude、Extract、ReturnType 与 Parameters，系统讲清 TypeScript 工具类型的工程价值与使用边界。
+slug: typescript-utility-types-details
+tags: [TypeScript, Utility Types, Partial, Omit, ReturnType]
+---
+
+{/* @format */}
+
+# TypeScript 工具类型详解
+
+工具类型是很多团队真正开始“高频使用 TypeScript”的入口。因为它们不像条件类型和映射类型那样偏底层机制，而是把一批非常常见的类型转换需求直接封装成了可复用能力。你不必每次都从零写高级类型，大部分业务场景都可以先从官方工具类型开始。
+
+要理解工具类型，关键不是死记名字，而是把它们放回真实项目问题里：什么时候要让字段全部可选，什么时候要剔除某些键，什么时候要从函数签名里拿到返回值，什么时候要从联合类型里做筛选。
+
+官方文档主线参考：
+
+- [Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)
+
+## 先建立一个判断框架
+
+可以把最常用的工具类型分成四组：
+
+- 结构修饰：`Partial`、`Required`、`Readonly`
+- 字段挑选：`Pick`、`Omit`、`Record`
+- 联合筛选：`Exclude`、`Extract`
+- 函数提取：`ReturnType`、`Parameters`
+
+如果把它们放进工程语境，几乎可以覆盖下面这些高频动作：
+
+- 从完整数据模型派生表单模型
+- 从配置对象中挑出子集
+- 从联合类型中保留或排除某些成员
+- 从已有函数签名中提取参数和返回值，避免手写重复类型
+
+## Partial
+
+一句话定义：`Partial<T>` 会把 `T` 的所有属性都变成可选。
+
+它解决什么问题：很多场景只需要“部分更新”或“编辑时不要求一次填全”，这时没必要重新手写一份几乎相同的可选结构。
+
+什么时候用：
+
+- 表单草稿
+- patch 更新参数
+- 初始化尚未完成的编辑态对象
+
+```ts
+type User = {
+  id: string
+  name: string
+  email: string
+}
+
+type UserPatch = Partial<User>
+```
+
+常见注意点：`Partial` 只是把属性变可选，不会改变属性值的类型，也不会自动表达“字段被省略”和“字段值可为 undefined”的业务差异。来源：[Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)
+
+## Required
+
+一句话定义：`Required<T>` 会把 `T` 的所有可选属性改成必选。
+
+它解决什么问题：有些对象在创建阶段可以缺字段，但进入核心逻辑前必须完整。`Required` 可以把“宽松输入”升级为“完整内部结构”。
+
+什么时候用：
+
+- 规范化后的配置对象
+- 默认值填充完成后的组件参数
+- 进入业务核心层后的完整数据模型
+
+```ts
+type ButtonProps = {
+  size?: 'sm' | 'md' | 'lg'
+  disabled?: boolean
+}
+
+type NormalizedButtonProps = Required<ButtonProps>
+```
+
+常见注意点：`Required` 不会自动帮你填默认值，它只是告诉类型系统“从这里开始这几个字段必须存在”。真正的运行时补全仍然要靠代码实现。
+
+## Readonly
+
+一句话定义：`Readonly<T>` 会把 `T` 的所有属性标记为只读。
+
+它解决什么问题：很多问题不是“类型不对”，而是“本不该被修改的对象被改了”。`Readonly` 可以显式建立不可变边界。
+
+什么时候用：
+
+- 组件只读输入
+- store 导出的只读快照
+- 配置对象或常量结构
+
+```ts
+type User = {
+  id: string
+  name: string
+}
+
+type ReadonlyUser = Readonly<User>
+```
+
+常见注意点：`Readonly` 是浅层只读。如果属性本身还是对象，嵌套层内部是否可改，要看更深层类型定义。不要把浅只读误解成深冻结。
+
+## Pick
+
+一句话定义：`Pick<T, K>` 会从 `T` 中只挑出 `K` 指定的字段，生成一个新对象类型。
+
+它解决什么问题：真实项目里，一个基础模型往往很大，而不同页面、组件或请求只关心其中少数字段。`Pick` 让这种“字段子集”表达更自然。
+
+什么时候用：
+
+- 列表项类型
+- 表单子集
+- 请求 payload 子集
+
+```ts
+type Product = {
+  id: string
+  title: string
+  price: number
+  stock: number
+}
+
+type ProductCard = Pick<Product, 'id' | 'title' | 'price'>
+```
+
+常见注意点：`Pick` 的价值不仅是减少字段，更重要的是让不同视图始终建立在同一个源类型之上，避免多份近似结构分叉。
+
+## Omit
+
+一句话定义：`Omit<T, K>` 会从 `T` 中移除指定字段，保留其余属性。
+
+它解决什么问题：有时你更容易描述“不要哪些字段”，而不是“只要哪些字段”，例如删除后端只读字段、去掉内部标识字段等。
+
+什么时候用：
+
+- 从完整模型中去掉 `id`、`createdAt` 等后端只读字段
+- 组件封装时屏蔽部分底层属性
+- 派生前端输入模型
+
+```ts
+type ProductCreateInput = Omit<Product, 'id'>
+```
+
+常见注意点：当你发现 `Omit` 一层套一层越来越多时，往往说明原始模型边界已经不清晰。工具类型可以减少重复，但不应该掩盖建模混乱。
+
+## Record
+
+一句话定义：`Record<K, T>` 用一组键 `K` 和统一值类型 `T` 构造对象类型。
+
+它解决什么问题：很多对象不是“若干固定字段的业务实体”，而是“键到值的映射表”。`Record` 更适合表达这种字典式结构。
+
+什么时候用：
+
+- 按 id 索引的数据缓存
+- 状态映射表
+- 路由名到标题的配置对象
+
+```ts
+type Status = 'idle' | 'loading' | 'success' | 'error'
+
+const statusText: Record<Status, string> = {
+  idle: '未开始',
+  loading: '加载中',
+  success: '成功',
+  error: '失败',
+}
+```
+
+常见注意点：`Record<string, T>` 表达的是“任意字符串键都允许”，而不是“只有当前几个键”。如果键集合是有限的，优先使用字面量联合作为 `K`。
+
+## Exclude
+
+一句话定义：`Exclude<T, U>` 会从联合类型 `T` 中排除所有可赋值给 `U` 的成员。
+
+它解决什么问题：当一个联合类型过大，而你希望去掉其中某些分支时，`Exclude` 比重写一份新联合更稳定。
+
+什么时候用：
+
+- 过滤请求状态
+- 屏蔽内部事件类型
+- 从大联合中去掉不支持的场景
+
+```ts
+type Status = 'idle' | 'loading' | 'success' | 'error'
+type ActiveStatus = Exclude<Status, 'idle'>
+```
+
+常见注意点：`Exclude` 作用于联合成员，而不是对象字段。很多人第一次接触时会误把它当成“删属性”的工具。
+
+## Extract
+
+一句话定义：`Extract<T, U>` 会从联合类型 `T` 中保留所有可赋值给 `U` 的成员。
+
+它解决什么问题：如果 `Exclude` 是排除，那么 `Extract` 就是筛选保留。它很适合从大联合里取出特定子集。
+
+什么时候用：
+
+- 提取某类事件
+- 提取某类路由名
+- 只保留某种结构的联合成员
+
+```ts
+type Status = 'idle' | 'loading' | 'success' | 'error'
+type FinishedStatus = Extract<Status, 'success' | 'error'>
+```
+
+常见注意点：`Extract` 和 `Exclude` 经常成对出现，它们本质上都建立在条件类型分发能力之上。来源：[Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)
+
+## ReturnType
+
+一句话定义：`ReturnType<T>` 会提取函数类型 `T` 的返回值类型。
+
+它解决什么问题：很多时候返回值类型已经由函数本身定义得很清楚，再手写一份相同结构只会造成重复和漂移。
+
+什么时候用：
+
+- 从请求函数中提取数据类型
+- 从工厂函数中提取实例结构
+- 从 store 创建函数中提取返回对象类型
+
+```ts
+function createUser() {
+  return {
+    id: '1',
+    name: 'Ada',
+  }
+}
+
+type User = ReturnType<typeof createUser>
+```
+
+常见注意点：`ReturnType` 依赖的是函数签名，因此前提是源函数的返回值类型设计本身要稳定。如果源函数返回 `any`，提取出来也不会更安全。
+
+## Parameters
+
+一句话定义：`Parameters<T>` 会提取函数类型 `T` 的参数元组类型。
+
+它解决什么问题：在封装高阶函数、事件代理或调用透传工具时，经常需要复用已有函数参数列表，而不是重新手写一遍。
+
+什么时候用：
+
+- 包装现有函数
+- 写日志代理或拦截器
+- 从 API 函数中提取入参
+
+```ts
+async function fetchUser(id: string, withPosts: boolean) {
+  return { id, withPosts }
+}
+
+type FetchUserParams = Parameters<typeof fetchUser>
+```
+
+此时 `FetchUserParams` 会是 `[id: string, withPosts: boolean]`。
+
+常见注意点：`Parameters` 返回的是元组，而不是对象。它适合复用原调用签名，但不一定适合作为最终业务入参模型。
+
+## 工具类型在真实项目中的使用顺序
+
+更稳定的实践不是“记住所有名字”，而是先判断问题属于哪一类：
+
+- 要改字段可选性或只读性：先想 `Partial`、`Required`、`Readonly`
+- 要选字段子集或排除字段：先想 `Pick`、`Omit`
+- 要表达字典映射：先想 `Record`
+- 要筛选联合类型：先想 `Exclude`、`Extract`
+- 要复用函数签名：先想 `ReturnType`、`Parameters`
+
+如果这一步已经能解决问题，就没有必要马上进入自定义高级类型。
+
+## 常见误区
+
+### 误区一：工具类型越多越专业
+
+工具类型的目标是减少重复，不是制造复杂度。很多时候直接定义一个清晰的业务类型，反而比多层工具类型拼装更好读。
+
+### 误区二：`Partial` 可以直接代表“更新接口”
+
+它只能表达“字段可选”，并不能表达业务层面的更新语义。例如某些字段虽然可选，但一旦出现必须满足额外约束，这就超出了 `Partial` 本身的能力。
+
+### 误区三：`Readonly` 等于不可变数据方案
+
+`Readonly` 只是类型层约束，不是运行时冻结，更不是完整状态管理策略。
+
+### 误区四：`Pick` / `Omit` 可以替代建模
+
+它们非常实用，但如果所有类型都靠“从别处剪来剪去”产生，最终很容易失去领域边界。源模型本身仍然要设计清楚。
+
+## 文末速查
+
+| 问题                 | 优先想到的工具类型 |
+| -------------------- | ------------------ |
+| 把所有字段改成可选   | `Partial<T>`       |
+| 把所有可选字段变必填 | `Required<T>`      |
+| 把对象变成只读结构   | `Readonly<T>`      |
+| 只保留一部分字段     | `Pick<T, K>`       |
+| 去掉一部分字段       | `Omit<T, K>`       |
+| 表达键值映射表       | `Record<K, T>`     |
+| 从联合中排除成员     | `Exclude<T, U>`    |
+| 从联合中提取成员     | `Extract<T, U>`    |
+| 提取函数返回值       | `ReturnType<T>`    |
+| 提取函数参数列表     | `Parameters<T>`    |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> 工具类型的价值不在于“会几个现成 API”，而在于它们把常见的结构变换需求沉淀成了稳定、可复用的类型操作入口。

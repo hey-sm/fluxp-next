@@ -1,0 +1,268 @@
+---
+title: 布局与特殊文件
+category: nextjs
+excerpt: 围绕 layout、template、page、loading、error、global-error、not-found 与 default，系统讲清 Next.js App Router 中最关键的一组特殊文件。
+slug: nextjs-layout-template-and-special-files
+tags: [Next.js, App Router, Layout, Template, loading.tsx]
+---
+
+{/* @format */}
+
+# Next.js 布局与特殊文件
+
+在 App Router 中，很多能力不是通过额外配置开启的，而是通过一组约定式特殊文件直接进入渲染链路。页面、布局、加载态、错误边界、404 和并行路由默认内容，都有对应的文件入口。理解这些文件各自的职责，是掌握 App Router 的关键一步。
+
+这篇文章不讨论普通业务组件，而聚焦那些会改变路由段行为的特殊文件。目标是建立一个稳定判断框架：什么时候用 `layout.tsx`，什么时候要引入 `template.tsx`，`loading.tsx`、`error.tsx`、`not-found.tsx` 分别负责哪一类边界。
+
+官方文档主线参考：
+
+- [Project Structure](https://nextjs.org/docs/app/getting-started/project-structure)
+- [Layouts and Pages](https://nextjs.org/docs/app/getting-started/layouts-and-pages)
+- [Error Handling](https://nextjs.org/docs/app/building-your-application/routing/error-handling)
+
+## 特殊文件的整体分工
+
+可以先把这组文件分成四层：
+
+- 基础页面结构：`page.tsx`、`layout.tsx`、`template.tsx`
+- 加载与错误边界：`loading.tsx`、`error.tsx`、`global-error.tsx`
+- 缺失状态：`not-found.tsx`
+- 并行路由兜底：`default.tsx`
+
+这组文件共同定义了某个 route segment 的行为边界，而不只是它长什么样。
+
+## page.tsx
+
+一句话定义：`page.tsx` 是某个路由段的页面入口文件，对应最终可访问的页面 UI。
+
+它解决什么问题：目录本身只定义路由段，真正要让路径可访问，还需要页面入口文件承载该段的叶子 UI。
+
+什么时候用：
+
+- 为某个路由创建页面
+- 定义该路径最终呈现的主内容
+
+```tsx
+export default function Page() {
+  return <h1>Hello Next.js</h1>
+}
+```
+
+常见注意点：没有 `page.tsx` 的路由段本身并不会形成页面，即使它下面 colocate 了许多组件和样式。
+
+## layout.tsx
+
+一句话定义：`layout.tsx` 用于定义某个路由段及其子路由共享的布局外壳。
+
+它解决什么问题：很多 UI 结构在页面切换时希望保留状态、保留交互并避免重复渲染，例如侧边栏、顶部导航和全局外壳。
+
+什么时候用：
+
+- 管理台外壳
+- 文档站导航骨架
+- 多页共享筛选区或页眉页脚
+
+```tsx
+export default function Layout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <section>
+      <aside>Sidebar</aside>
+      <main>{children}</main>
+    </section>
+  )
+}
+```
+
+常见注意点：layout 的价值不只是复用 UI，更关键的是它在导航中会保留状态并参与边界复用。因此只有真正应该共享的结构才应进入 layout。来源：[Layouts and Pages](https://nextjs.org/docs/app/getting-started/layouts-and-pages)
+
+## template.tsx
+
+一句话定义：`template.tsx` 和 layout 类似，也包裹子内容，但在导航时会重新创建实例。
+
+它解决什么问题：有些共享外壳虽然结构一致，但不希望像 layout 一样长期保留状态，这时 template 提供了“共享结构但不保状态”的边界。
+
+什么时候用：
+
+- 希望每次切换都重置局部状态
+- 希望每次导航都重新触发某些挂载逻辑
+
+```tsx
+export default function Template({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return <div className="page-shell">{children}</div>
+}
+```
+
+常见注意点：不要把 template 当成 layout 的默认替代。二者真正差异不在 JSX 形状，而在生命周期和状态保留语义。
+
+## loading.tsx
+
+一句话定义：`loading.tsx` 用于为某个路由段自动建立 Suspense 加载占位边界。
+
+它解决什么问题：当页面或嵌套路由中的数据尚未准备好时，需要尽快返回一个结构稳定的加载态，而不是让用户等待整个页面空白。
+
+什么时候用：
+
+- 列表页请求数据较慢
+- 带嵌套路由的区域需要分段加载
+- 希望导航后尽快看到页面骨架
+
+```tsx
+export default function Loading() {
+  return <div>Loading...</div>
+}
+```
+
+常见注意点：`loading.tsx` 的价值在于路由段级边界，而不是随意放一个“loading 文案”。加载态设计是否合理，会直接影响导航体验和 Streaming 效果。来源：[Loading UI](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming)
+
+## error.tsx
+
+一句话定义：`error.tsx` 用于为当前路由段及其子树建立可恢复的错误边界。
+
+它解决什么问题：页面运行时错误如果没有边界，会导致整棵树失败；而 `error.tsx` 可以把故障限制在更小的段级范围内。
+
+什么时候用：
+
+- 列表页或详情页可能抛出运行时错误
+- 希望在局部失败时仍保留上层布局
+- 需要给用户重试入口
+
+```tsx
+'use client'
+
+export default function Error({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string }
+  reset: () => void
+}) {
+  return (
+    <div>
+      <p>{error.message}</p>
+      <button onClick={reset}>Retry</button>
+    </div>
+  )
+}
+```
+
+常见注意点：`error.tsx` 是客户端错误边界，因此需要 `'use client'`。它适合处理局部异常，不应用来吞掉所有业务错误。来源：[Error Handling](https://nextjs.org/docs/app/building-your-application/routing/error-handling)
+
+## global-error.tsx
+
+一句话定义：`global-error.tsx` 用于处理根布局级别的全局错误边界。
+
+它解决什么问题：当错误已经超出普通 segment 级边界，甚至影响根布局时，需要一个更高层的兜底入口。
+
+什么时候用：
+
+- 根布局失败
+- 希望为整个应用提供全局级故障页
+
+```tsx
+'use client'
+
+export default function GlobalError() {
+  return (
+    <html>
+      <body>Something went wrong</body>
+    </html>
+  )
+}
+```
+
+常见注意点：`global-error.tsx` 不是每个项目都必须有，但一旦定义，它承担的是更高层兜底责任，而不是普通业务错误展示。
+
+## not-found.tsx
+
+一句话定义：`not-found.tsx` 用于定义当前路由段的 404 UI。
+
+它解决什么问题：很多资源级“找不到”并不是普通运行时异常，而是明确的 404 语义，需要独立呈现。
+
+什么时候用：
+
+- 文章、商品、用户等资源不存在
+- 某路由段需要自定义 404 呈现
+
+```tsx
+export default function NotFound() {
+  return <div>Post not found</div>
+}
+```
+
+常见注意点：`not-found.tsx` 和 `error.tsx` 不是同一件事。一个强调“资源不存在”，一个强调“运行时失败”。
+
+## default.tsx
+
+一句话定义：`default.tsx` 用于为 Parallel Routes 中未匹配到的槽位提供默认内容。
+
+它解决什么问题：并行路由并不总会在每次导航中都匹配到所有 slot，`default.tsx` 用于保持结构完整并避免未定义状态。
+
+什么时候用：
+
+- 使用 `@slot` 并行路由
+- 某个槽位在部分导航下没有活动内容
+
+```tsx
+export default function Default() {
+  return null
+}
+```
+
+常见注意点：只有在并行路由语境下，`default.tsx` 才有意义。普通页面结构不需要它。
+
+## 特殊文件的选择顺序
+
+在真实项目中，更稳定的判断顺序通常是：
+
+- 定义页面入口先写 `page.tsx`
+- 有共享外壳时优先考虑 `layout.tsx`
+- 共享结构但不想保留状态时再考虑 `template.tsx`
+- 数据较慢且需要分段反馈时写 `loading.tsx`
+- 局部运行时异常需要边界时写 `error.tsx`
+- 资源不存在时用 `not-found.tsx`
+- 并行路由缺省内容时才写 `default.tsx`
+
+这条顺序的重点是按边界职责选择文件，而不是“觉得框架有这些文件就都补上”。
+
+## 常见误区
+
+### 误区一：`layout.tsx` 和 `template.tsx` 只是命名不同
+
+不准确。它们在状态保留和实例生命周期上的语义不同。
+
+### 误区二：`loading.tsx` 只是一个全局加载页
+
+不准确。它是 route segment 级的 Suspense 边界入口，影响的是局部加载体验。
+
+### 误区三：`error.tsx` 和 `not-found.tsx` 可以互相替代
+
+不准确。它们分别表达运行时错误和 404 语义，职责不同。
+
+### 误区四：特殊文件越全越专业
+
+框架提供的是边界能力，不是要求每个段都把全部文件配齐。真正重要的是边界设计是否准确。
+
+## 文末速查
+
+| 需求 | 优先想到的特殊文件 |
+| --- | --- |
+| 创建可访问页面 | `page.tsx` |
+| 建立共享外壳并保留状态 | `layout.tsx` |
+| 建立共享外壳但不保留实例状态 | `template.tsx` |
+| 提供路由段加载态 | `loading.tsx` |
+| 建立局部错误边界 | `error.tsx` |
+| 建立全局兜底错误边界 | `global-error.tsx` |
+| 呈现 404 语义 | `not-found.tsx` |
+| 并行路由槽位默认内容 | `default.tsx` |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 的特殊文件不是零散功能点，而是一组直接参与页面树边界划分的框架协议。

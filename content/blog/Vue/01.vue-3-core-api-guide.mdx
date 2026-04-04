@@ -1,0 +1,304 @@
+---
+title: API
+category: vue
+excerpt: 围绕 Composition API 与 script setup，系统梳理 Vue 3 最常用的核心 API，包括 ref、reactive、computed、watch、watchEffect、defineProps、defineEmits 与 defineExpose。
+slug: vue-3-core-api
+tags: [Vue 3, Composition API, ref, reactive, computed]
+---
+
+{/* @format */}
+
+# Vue 3 核心 API 合集
+
+如果只从现代 Vue 3 的日常开发出发，最需要先掌握的并不是所有 API，而是少数几组真正构成主线的能力：状态如何声明、派生值如何计算、副作用如何组织、组件输入输出如何定义，以及组件内部能力如何暴露给父级。
+
+这篇文章只围绕 `Composition API + <script setup>` 语境展开，不回到 Vue 2 / Options API 的历史写法。目标不是把 API 做成字典，而是建立一套稳定的选择框架：什么时候用 `ref`，什么时候用 `reactive`，什么时候应该写 `computed`，什么时候该落到 `watch`，以及组件通信宏在现代 Vue 中分别承担什么职责。
+
+## 核心 API 的整体分工
+
+可以先把这批 API 分成三层：
+
+- 状态层：`ref`、`reactive`
+- 推导与副作用层：`computed`、`watch`、`watchEffect`
+- 组件边界层：`defineProps`、`defineEmits`、`defineExpose`
+
+掌握这三层之后，大多数 Vue 3 业务组件的组织方式就会自然稳定下来。
+
+## ref
+
+一句话定义：`ref()` 用来创建一个响应式值容器，最适合承载单个值、原始类型值，或需要显式替换引用的状态。
+
+它解决什么问题：普通变量变化不会触发 Vue 更新，而 `ref` 能把“值变化”纳入响应式系统。
+
+什么时候用：
+
+- 计数器、开关、输入框值
+- 请求状态、分页索引、当前 tab
+- 需要整体替换的一段值
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const count = ref(0)
+
+function increment() {
+  count.value += 1
+}
+</script>
+
+<template>
+  <button @click="increment">{{ count }}</button>
+</template>
+```
+
+常见注意点：`ref` 在模板中会自动解包，但在 `script` 里必须通过 `.value` 访问。不要把“模板里不用 `.value`”误解成“任何地方都不用 `.value`”。来源：[Reactivity Fundamentals](https://vuejs.org/guide/essentials/reactivity-fundamentals)
+
+## reactive
+
+一句话定义：`reactive()` 用来把一个对象包装成响应式代理，适合组织一组彼此相关的状态字段。
+
+它解决什么问题：当状态天然是对象结构时，`reactive` 比多个零散 `ref` 更利于表达一整块状态的语义边界。
+
+什么时候用：
+
+- 表单对象
+- 筛选条件对象
+- 一组始终一起出现的 UI 状态
+
+```vue
+<script setup lang="ts">
+import { reactive } from 'vue'
+
+const filters = reactive({
+  keyword: '',
+  status: 'all',
+  page: 1,
+})
+
+function reset() {
+  filters.keyword = ''
+  filters.status = 'all'
+  filters.page = 1
+}
+</script>
+
+<template>
+  <input v-model="filters.keyword" placeholder="搜索关键词" />
+  <button @click="reset">重置</button>
+</template>
+```
+
+常见注意点：不要随意把整个 `reactive` 对象重新赋值成另一个新对象，否则原来的响应式连接会断开。对这类状态更稳定的做法通常是修改对象属性，或者在确实需要整体替换时使用 `ref` 持有对象。来源：[Reactivity Fundamentals](https://vuejs.org/guide/essentials/reactivity-fundamentals)
+
+## computed
+
+一句话定义：`computed()` 用来声明一个基于其他响应式状态推导出的缓存值。
+
+它解决什么问题：把“派生结果”从模板或副作用里抽离出来，让 Vue 只在依赖变化时重新计算。
+
+什么时候用：
+
+- 列表过滤结果
+- 价格合计、统计值
+- 表单合法性判断
+- 依赖多个响应式字段的派生展示值
+
+```vue
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+
+const firstName = ref('Ada')
+const lastName = ref('Lovelace')
+
+const fullName = computed(() => `${firstName.value} ${lastName.value}`)
+</script>
+
+<template>
+  <p>{{ fullName }}</p>
+</template>
+```
+
+常见注意点：`computed` 的 getter 应保持纯净，只负责计算，不要在里面发请求、改状态或操作 DOM。它是“派生值”，不是“副作用入口”。来源：[Computed Properties](https://vuejs.org/guide/essentials/computed)
+
+## watch
+
+一句话定义：`watch()` 用来监听一个明确的响应式来源，并在它变化时执行副作用逻辑。
+
+它解决什么问题：当你需要在状态变化后做异步请求、日志、同步外部系统、清理旧任务时，`watch` 提供了可控的副作用入口。
+
+什么时候用：
+
+- 监听路由参数或筛选条件变化后重新请求
+- 监听某个开关变化后同步到本地存储
+- 需要拿到“旧值”和“新值”做对比
+
+```vue
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+
+const keyword = ref('')
+const result = ref<string[]>([])
+
+watch(keyword, async (nextKeyword) => {
+  if (!nextKeyword.trim()) {
+    result.value = []
+    return
+  }
+
+  const response = await fetch(`/api/search?q=${encodeURIComponent(nextKeyword)}`)
+  result.value = await response.json()
+})
+</script>
+```
+
+常见注意点：`watch` 解决的是副作用，不是派生值。如果结果可以直接由现有状态计算出来，就优先考虑 `computed`，不要把可计算逻辑写成监听器。来源：[Watchers](https://vuejs.org/guide/essentials/watchers)
+
+## watchEffect
+
+一句话定义：`watchEffect()` 会立即运行一段副作用，并自动收集其中用到的响应式依赖。
+
+它解决什么问题：当副作用依赖项很多，或者你不想手动枚举监听源时，`watchEffect` 能用更短路径建立依赖关系。
+
+什么时候用：
+
+- 依赖项较多的同步副作用
+- 调试型或轻量同步型副作用
+- 想快速把某些响应式状态映射到外部系统
+
+```vue
+<script setup lang="ts">
+import { ref, watchEffect } from 'vue'
+
+const page = ref(1)
+const pageSize = ref(20)
+
+watchEffect(() => {
+  console.log('current query ->', {
+    page: page.value,
+    pageSize: pageSize.value,
+  })
+})
+</script>
+```
+
+常见注意点：`watchEffect` 的依赖来源是隐式的，这让它写起来更短，但也更容易把副作用范围写得过大。依赖边界很明确、需要更强可控性时，优先使用 `watch`。来源：[Watchers](https://vuejs.org/guide/essentials/watchers)
+
+## defineProps
+
+一句话定义：`defineProps()` 是 `<script setup>` 中声明组件输入接口的编译宏。
+
+它解决什么问题：把父组件传入的 props 明确建模为组件 API，而不是在运行时隐式接收。
+
+什么时候用：
+
+- 所有需要接收外部输入的组件
+- 需要类型提示和约束的组件 API
+
+```vue
+<script setup lang="ts">
+const props = defineProps<{
+  title: string
+  collapsed?: boolean
+}>()
+</script>
+
+<template>
+  <section>
+    <h2>{{ props.title }}</h2>
+    <p v-if="props.collapsed">已折叠</p>
+  </section>
+</template>
+```
+
+常见注意点：`defineProps` 是编译宏，只能在 `<script setup>` 顶层调用，不能写进条件分支或普通函数里。来源：[SFC Script Setup](https://vuejs.org/api/sfc-script-setup.html)
+
+## defineEmits
+
+一句话定义：`defineEmits()` 是 `<script setup>` 中声明组件输出事件的编译宏。
+
+它解决什么问题：把“子组件向外通知什么”定义成清晰接口，避免事件名和参数约定散落在模板里。
+
+什么时候用：
+
+- 表单组件回传修改结果
+- 弹窗、下拉、选择器等组件向父级抛出交互事件
+- 自定义组件配合 `v-model`
+
+```vue
+<script setup lang="ts">
+const emit = defineEmits<{
+  change: [value: string]
+}>()
+
+function select(value: string) {
+  emit('change', value)
+}
+</script>
+
+<template>
+  <button @click="select('done')">切换状态</button>
+</template>
+```
+
+常见注意点：`props` 负责输入，`emit` 负责输出。不要把本该向父级回传的状态变化偷偷改成直接修改 props，这会破坏单向数据流。来源：[Component Events](https://vuejs.org/guide/components/events)
+
+## defineExpose
+
+一句话定义：`defineExpose()` 用来显式声明组件通过模板 ref 对外暴露哪些成员。
+
+它解决什么问题：默认情况下，`<script setup>` 组件内部实现并不会自动全部暴露给父组件；`defineExpose` 提供了受控暴露机制。
+
+什么时候用：
+
+- 父组件需要调用子组件的命令式方法
+- 需要暴露 `focus()`、`open()`、`reset()` 这类有限能力
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const inputRef = ref<HTMLInputElement | null>(null)
+
+function focus() {
+  inputRef.value?.focus()
+}
+
+defineExpose({ focus })
+</script>
+
+<template>
+  <input ref="inputRef" />
+</template>
+```
+
+常见注意点：`defineExpose` 应只暴露少量稳定的命令式接口，不要把整个组件内部状态和实现细节全部暴露出去。来源：[SFC Script Setup](https://vuejs.org/api/sfc-script-setup.html)
+
+## 怎么组合这些 API
+
+在现代 Vue 3 组件里，一个比较稳定的组织方式通常是：
+
+- 用 `ref` / `reactive` 存状态
+- 用 `computed` 表达派生结果
+- 用 `watch` / `watchEffect` 处理副作用
+- 用 `defineProps` / `defineEmits` 定义组件边界
+- 只有在必须命令式暴露能力时才使用 `defineExpose`
+
+如果把“计算”和“副作用”混在一起，或者把“输入输出边界”和“内部状态”混在一起，组件就会很快变得难以维护。
+
+## 文末速查
+
+| 场景                     | 优先想到的 API |
+| ------------------------ | -------------- |
+| 单个值或可整体替换的状态 | `ref`          |
+| 一组关联状态字段         | `reactive`     |
+| 基于已有状态推导新值     | `computed`     |
+| 状态变化后触发副作用     | `watch`        |
+| 自动收集依赖的副作用     | `watchEffect`  |
+| 定义组件输入             | `defineProps`  |
+| 定义组件输出事件         | `defineEmits`  |
+| 向父组件暴露命令式方法   | `defineExpose` |
+
+如果只保留一个判断标准，可以记住下面这句话：
+
+> `ref` / `reactive` 负责保存状态，`computed` 负责派生结果，`watch` 负责副作用，编译宏负责组件边界。

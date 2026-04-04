@@ -1,0 +1,672 @@
+---
+title: Vue Router
+category: vue
+excerpt: 按当前官方文档目录，系统讲清 Vue Router 的基础与进阶能力，包括动态匹配、命名路由、守卫、数据获取、懒加载、类型化路由与导航故障。
+slug: vue-router-routing-system
+tags: [Vue Router, Routing, Dynamic Routes, Navigation Guards, Typed Routes]
+---
+
+{/* @format */}
+
+# Vue Router 路由体系
+
+Vue Router 是 Vue 官方路由库，也是现代 Vue 单页应用最核心的基础设施之一。它解决的并不只是“页面跳转”问题，而是把 URL、页面组件、导航状态、访问控制、路由级代码拆分与页面层级组织统一进同一套客户端导航系统。
+
+需要先说明一点：当前官方文档已经提供 `Vue Router 5` 的迁移页面，但本文不写迁移专题，也不把重点放在新版本增量能力上，而是严格按照官方中文文档当前的目录主线，系统整理其基础与进阶能力。对绝大多数纯客户端 Vue 项目而言，这些核心能力的心智模型仍然是连续的。
+
+官方目录来源：
+
+- [Vue Router 中文文档](https://router.vuejs.org/zh/guide/)
+- [从 Vue Router 4 迁移到 Vue Router 5](https://router.vuejs.org/guide/migration/v4-to-v5.html)
+
+## 基础
+
+### 入门
+
+一句话定义：入门部分解决的是“如何把 Vue Router 接入应用，并建立最基本的路由映射关系”。
+
+它解决什么问题：没有 Router 时，客户端页面切换只能靠手动控制组件显示；而 Router 把 URL 与页面结构建立了一一对应关系。
+
+什么时候用：
+
+- 初始化一个多页面式单页应用
+- 把 URL、页面组件和浏览器历史记录接起来
+
+```ts
+import { createApp } from 'vue'
+import { createRouter, createWebHistory } from 'vue-router'
+import App from './App.vue'
+import HomePage from './pages/HomePage.vue'
+import AboutPage from './pages/AboutPage.vue'
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', name: 'home', component: HomePage },
+    { path: '/about', name: 'about', component: AboutPage },
+  ],
+})
+
+createApp(App).use(router).mount('#app')
+```
+
+常见注意点：路由系统初始化不只是“注册 routes 数组”，还包括历史模式、应用挂载顺序以及后续导航守卫等全局能力的入口。来源：[入门](https://router.vuejs.org/zh/guide/)
+
+### 动态路由匹配
+
+一句话定义：动态路由匹配通过路径参数把同一类页面映射为不同实例，例如 `/users/:id`。
+
+它解决什么问题：详情页、编辑页、分类页这类“结构相同、数据不同”的页面，不需要为每个实体单独声明一条静态路由。
+
+什么时候用：
+
+- 用户详情
+- 文章详情
+- 订单页、分类页、项目页
+
+```ts
+const routes = [
+  {
+    path: '/users/:id',
+    name: 'user-detail',
+    component: () => import('@/pages/UserDetailPage.vue'),
+  },
+]
+```
+
+```vue
+<script setup lang="ts">
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+</script>
+
+<template>
+  <h1>用户 ID：{{ route.params.id }}</h1>
+</template>
+```
+
+常见注意点：当同一路由记录下只变化参数时，路由组件实例可能被复用，因此不能只在首次挂载时读取一次参数就结束。参数变化时需要显式响应，例如监听 `route.params.id` 或依赖它重新获取数据。来源：[动态路由匹配](https://router.vuejs.org/zh/guide/essentials/dynamic-matching.html)
+
+### 路由的匹配语法
+
+一句话定义：路由匹配语法描述的是路径参数、可选段、重复段和自定义正则等规则如何把 URL 映射到路由记录。
+
+它解决什么问题：并不是所有路径都只是 `/users/:id` 这种简单形式，某些业务需要更精细的 URL 约束。
+
+什么时候用：
+
+- 需要限制某个参数的格式
+- 参数可能缺省、重复或需要更复杂模式匹配
+
+```ts
+const routes = [
+  {
+    path: '/orders/:orderId(\\d+)',
+    name: 'order-detail',
+    component: () => import('@/pages/OrderDetailPage.vue'),
+  },
+]
+```
+
+常见注意点：匹配语法越复杂，路由可读性越低。只有当 URL 规则本身确实需要限制时，才应该使用更复杂的 path pattern，而不是为了“高级感”堆叠匹配语法。来源：[路由的匹配语法](https://router.vuejs.org/zh/guide/essentials/route-matching-syntax.html)
+
+### 嵌套路由
+
+一句话定义：嵌套路由用来表达布局与子页面之间的层级关系。
+
+它解决什么问题：很多页面不是平铺切换，而是“一个稳定布局 + 一个内部内容区域”，这时需要通过 children 组织父子路由结构。
+
+什么时候用：
+
+- 设置中心
+- 用户中心
+- 后台系统中的二级页面布局
+
+```ts
+const routes = [
+  {
+    path: '/settings',
+    component: () => import('@/pages/SettingsLayout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'settings-profile',
+        component: () => import('@/pages/SettingsProfile.vue'),
+      },
+      {
+        path: 'security',
+        name: 'settings-security',
+        component: () => import('@/pages/SettingsSecurity.vue'),
+      },
+    ],
+  },
+]
+```
+
+常见注意点：嵌套路由表达的是页面层级与共享布局，不是目录层级美观问题。只有在页面之间真的共享父级布局时，children 才有意义。来源：[嵌套路由](https://router.vuejs.org/zh/guide/essentials/nested-routes.html)
+
+### 命名路由
+
+一句话定义：命名路由给每条路由记录一个稳定标识符，使导航和维护不必始终依赖硬编码路径字符串。
+
+它解决什么问题：当路径变化、参数复杂、重定向逻辑增多时，直接写字符串 URL 容易失去可维护性。
+
+什么时候用：
+
+- 页面之间做编程式跳转
+- 有参数页面需要稳定导航
+- 想让守卫、重定向和菜单逻辑更明确
+
+```ts
+const routes = [
+  {
+    path: '/users/:id',
+    name: 'user-detail',
+    component: () => import('@/pages/UserDetailPage.vue'),
+  },
+]
+```
+
+```ts
+router.push({ name: 'user-detail', params: { id: '42' } })
+```
+
+常见注意点：命名路由的价值在于“稳定语义”，不是“少打字”。一旦项目进入中大型阶段，路由 `name` 往往比 `path` 更适合作为跨模块协作的引用点。来源：[命名路由](https://router.vuejs.org/zh/guide/essentials/named-routes.html)
+
+### 编程式导航
+
+一句话定义：编程式导航是指在 JavaScript 中主动调用路由实例完成跳转，而不是只靠 `<RouterLink>`。
+
+它解决什么问题：某些跳转不是点击普通链接，而是提交成功后重定向、权限检查后跳转、业务逻辑完成后跳转。
+
+什么时候用：
+
+- 表单提交成功后进入详情页
+- 登录成功后跳回原页面
+- 某些操作后前进、后退或替换当前记录
+
+```ts
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+async function submitSuccess(id: string) {
+  await router.push({ name: 'user-detail', params: { id } })
+}
+```
+
+常见注意点：`push` 会新增一条历史记录，`replace` 会替换当前记录。业务语义不同，选择也不同。来源：[编程式导航](https://router.vuejs.org/zh/guide/essentials/navigation.html)
+
+### 命名视图
+
+一句话定义：命名视图允许同一路由同时渲染多个视图出口，而不只是默认的单个 `<RouterView>`。
+
+它解决什么问题：某些布局需要同时切换多个区域，例如主内容区与侧栏、工具栏、辅助信息区。
+
+什么时候用：
+
+- 复杂后台布局
+- 某一路由下多个并列内容区同步切换
+
+```ts
+const routes = [
+  {
+    path: '/dashboard',
+    components: {
+      default: () => import('@/pages/DashboardMain.vue'),
+      sidebar: () => import('@/pages/DashboardSidebar.vue'),
+    },
+  },
+]
+```
+
+常见注意点：命名视图适合少量清晰的多区域布局，不适合拿来替代正常组件组合。大多数页面结构仍应优先用普通组件拆分。来源：[命名视图](https://router.vuejs.org/zh/guide/essentials/named-views.html)
+
+### 重定向和别名
+
+一句话定义：重定向会把访问请求导向另一条路由，别名则让多个 URL 指向同一个匹配结果。
+
+它解决什么问题：有些路径需要兼容旧链接、做默认跳转，或提供多个访问入口但共享同一页面语义。
+
+什么时候用：
+
+- 旧路径迁移
+- 某个模块根路径跳到默认子页
+- 提供语义不同但内容相同的路径入口
+
+```ts
+const routes = [
+  { path: '/home', redirect: '/' },
+  {
+    path: '/users',
+    component: () => import('@/pages/UserListPage.vue'),
+    alias: ['/members'],
+  },
+]
+```
+
+常见注意点：重定向是导航层行为，别名是匹配层行为。二者目的不同，不要混用。来源：[重定向和别名](https://router.vuejs.org/zh/guide/essentials/redirect-and-alias.html)
+
+### 路由组件传参
+
+一句话定义：路由组件传参允许把路由参数解耦为组件 props，而不是让组件内部直接依赖整个 `route` 对象。
+
+它解决什么问题：页面组件如果直接到处读取 `route.params`，会把组件和路由耦合得过紧，不利于复用和测试。
+
+什么时候用：
+
+- 详情页参数输入
+- 让路由组件 API 更清晰
+- 希望组件以 props 形式接收路由数据
+
+```ts
+const routes = [
+  {
+    path: '/users/:id',
+    name: 'user-detail',
+    component: () => import('@/pages/UserDetailPage.vue'),
+    props: true,
+  },
+]
+```
+
+```vue
+<script setup lang="ts">
+defineProps<{ id: string }>()
+</script>
+```
+
+常见注意点：如果组件本质上只是“根据路由参数显示内容”，优先考虑 `props: true` 或映射函数，让 URL 与组件输入之间保持更清晰的契约。来源：[路由组件传参](https://router.vuejs.org/zh/guide/essentials/passing-props.html)
+
+### 匹配当前路由的链接
+
+一句话定义：`RouterLink` 会自动判断目标链接是否匹配当前路由，并暴露激活状态。
+
+它解决什么问题：导航菜单、高亮 tabs、侧边栏目录都需要知道“当前是不是这个路由”。
+
+什么时候用：
+
+- 侧边栏菜单高亮
+- tab 导航
+- 当前页面入口状态展示
+
+```vue
+<template>
+  <RouterLink to="/users" active-class="is-active"> 用户列表 </RouterLink>
+</template>
+```
+
+常见注意点：要区分 `isActive` 和 `isExactActive` 的语义。前者通常表示包含匹配，后者表示更严格的精确匹配。来源：[匹配当前路由的链接](https://router.vuejs.org/zh/guide/essentials/active-links.html)
+
+### 不同的历史记录模式
+
+一句话定义：历史记录模式决定 Router 如何和浏览器 URL 协作，最常见的是 HTML5 history 模式与 hash 模式。
+
+它解决什么问题：不同部署环境对 URL、刷新行为和服务端回退要求不同，Router 需要有不同历史实现。
+
+什么时候用：
+
+- 常规现代站点：`createWebHistory`
+- 无法配置服务端回退时：`createWebHashHistory`
+- 内存环境或测试：`createMemoryHistory`
+
+```ts
+import { createRouter, createWebHistory } from 'vue-router'
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [],
+})
+```
+
+常见注意点：HTML5 history 模式在生产部署时通常需要服务端把未知路径回退到应用入口，否则刷新深层链接会直接 404。来源：[不同的历史记录模式](https://router.vuejs.org/zh/guide/essentials/history-mode.html)
+
+## 进阶
+
+### 导航守卫
+
+一句话定义：导航守卫用来在路由跳转前后执行校验、重定向、取消和清理逻辑。
+
+它解决什么问题：导航并不总是“点击即进入”，常常需要先判断登录、权限、表单未保存状态或某些业务前置条件。
+
+什么时候用：
+
+- 登录态校验
+- 权限拦截
+- 进入前预检查
+- 离开前阻止误操作
+
+```ts
+router.beforeEach((to) => {
+  const loggedIn = Boolean(localStorage.getItem('token'))
+
+  if (to.meta.requiresAuth && !loggedIn) {
+    return { name: 'login' }
+  }
+})
+```
+
+常见注意点：守卫负责导航控制，不负责替代整套请求层和页面状态管理。把过多业务流程塞进全局守卫，通常会让路由层失控。来源：[导航守卫](https://router.vuejs.org/zh/guide/advanced/navigation-guards.html)
+
+### 路由元信息
+
+一句话定义：路由元信息 `meta` 是附着在路由记录上的自定义语义字段。
+
+它解决什么问题：有些页面级配置属于“路由语义”，例如是否需要登录、页面标题、面包屑、过渡名、菜单高亮标记等，不应散落到多个组件里。
+
+什么时候用：
+
+- 认证与权限标记
+- 页面标题
+- 过渡效果配置
+- 导航菜单或面包屑辅助信息
+
+```ts
+const routes = [
+  {
+    path: '/reports',
+    name: 'reports',
+    component: () => import('@/pages/ReportsPage.vue'),
+    meta: {
+      requiresAuth: true,
+      title: '报表中心',
+    },
+  },
+]
+```
+
+常见注意点：`meta` 更适合路由级语义配置，不适合作为大型业务状态容器。它是配置入口，不是通用数据仓库。来源：[路由元信息](https://router.vuejs.org/zh/guide/advanced/meta.html)
+
+### 数据获取
+
+一句话定义：数据获取章节讨论的是路由切换过程中，页面数据应该在什么时候请求，以及如何组织加载体验。
+
+它解决什么问题：详情页、列表页、报表页往往依赖路由参数或查询串，必须在导航前后正确获取数据。
+
+什么时候用：
+
+- 路由进入后按参数请求详情
+- 切换查询条件后重新请求列表
+- 需要在导航前或导航后处理数据
+
+```vue
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+const user = ref<null | { id: string; name: string }>(null)
+
+watch(
+  () => route.params.id,
+  async (id) => {
+    if (!id) return
+    const response = await fetch(`/api/users/${id}`)
+    user.value = await response.json()
+  },
+  { immediate: true },
+)
+</script>
+```
+
+常见注意点：对于普通客户端项目，很多数据获取更适合“导航后进入组件，再根据 `route` 响应式地请求”，而不是一律塞进守卫里。来源：[数据获取](https://router.vuejs.org/zh/guide/advanced/data-fetching.html)
+
+### 组合式 API
+
+一句话定义：组合式 API 章节解决的是在 Vue 3 中如何以 Composition API 方式访问和控制 Router。
+
+它解决什么问题：在 `setup()` / `<script setup>` 语境下，不再依赖 `this.$router` 和 `this.$route`，而是使用专门的组合式函数。
+
+什么时候用：
+
+- 所有现代 Vue 3 + Composition API 路由组件
+- 在任意渲染于 `<RouterView>` 下的组件里访问路由信息
+
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+
+const route = useRoute()
+const router = useRouter()
+
+const userId = computed(() => route.params.id)
+
+onBeforeRouteLeave(() => {
+  const leave = window.confirm('确定离开当前页面？')
+  return leave
+})
+
+function goHome() {
+  router.push({ name: 'home' })
+}
+</script>
+```
+
+常见注意点：`useRoute` / `useRouter` 是现代 Vue 3 路由开发主线。只要项目已经以 Composition API 为主，就不应再以 `this.$route` / `this.$router` 为思维中心。来源：[组合式 API](https://router.vuejs.org/zh/guide/advanced/composition-api)
+
+### RouterView 插槽
+
+一句话定义：`<RouterView>` 插槽允许你拿到当前匹配到的组件，再围绕它包裹额外结构。
+
+它解决什么问题：有些路由页面需要统一动画、KeepAlive、布局包装或调试结构，这时默认的直接渲染 `<RouterView />` 不够灵活。
+
+什么时候用：
+
+- 包裹 `Transition`
+- 包裹 `KeepAlive`
+- 在页面组件外增加统一壳层
+
+```vue
+<template>
+  <RouterView v-slot="{ Component }">
+    <Transition name="fade">
+      <component :is="Component" />
+    </Transition>
+  </RouterView>
+</template>
+```
+
+常见注意点：RouterView 插槽的价值在于“接管渲染包装层”，而不是重新发明一套路由机制。来源：[RouterView 插槽](https://router.vuejs.org/zh/guide/advanced/router-view-slot.html)
+
+### 过渡动效
+
+一句话定义：路由过渡动效用来在页面切换时为进入与离开状态增加动画效果。
+
+它解决什么问题：页面切换如果完全没有过渡，在某些内容型或后台型应用里会显得生硬；而合理的过渡能强化页面层级和切换感知。
+
+什么时候用：
+
+- 页面切换需要视觉连续性
+- 后台系统、文档系统、设置中心等多页壳层
+
+```vue
+<template>
+  <RouterView v-slot="{ Component, route }">
+    <Transition :name="route.meta.transitionName || 'fade'">
+      <component :is="Component" />
+    </Transition>
+  </RouterView>
+</template>
+```
+
+常见注意点：路由过渡是体验增强，不是默认必需项。动画过重会伤害可用性，特别是在后台工具和高频切页场景。来源：[过渡动效](https://router.vuejs.org/zh/guide/advanced/transitions)
+
+### 滚动行为
+
+一句话定义：滚动行为配置用来决定导航后页面滚动位置应该如何恢复、重置或定位。
+
+它解决什么问题：用户在列表、详情、返回操作之间切换时，滚动位置如果失控，体验会很差。
+
+什么时候用：
+
+- 返回上一页时恢复滚动位置
+- 切页时滚动到顶部
+- 带锚点的页面定位
+
+```ts
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) {
+      return savedPosition
+    }
+
+    if (to.hash) {
+      return { el: to.hash, behavior: 'smooth' }
+    }
+
+    return { top: 0 }
+  },
+})
+```
+
+常见注意点：滚动行为是路由级体验配置，不应散落到每个页面组件里各自手动控制。来源：[滚动行为](https://router.vuejs.org/zh/guide/advanced/scroll-behavior.html)
+
+### 路由懒加载
+
+一句话定义：路由懒加载让页面组件只在真正访问该路由时才下载对应代码。
+
+它解决什么问题：页面级代码天然适合按路由拆分，如果全部打进首屏包，会迅速拖慢加载性能。
+
+什么时候用：
+
+- 几乎所有页面级组件
+- 中后台、设置页、报表页、详情页等天然分屏场景
+
+```ts
+const routes = [
+  {
+    path: '/reports',
+    name: 'reports',
+    component: () => import('@/pages/ReportsPage.vue'),
+  },
+]
+```
+
+常见注意点：对页面级组件，优先使用路由懒加载而不是在页面内再额外包一层异步组件。来源：[路由懒加载](https://router.vuejs.org/zh/guide/advanced/lazy-loading.html)
+
+### 类型化路由
+
+一句话定义：类型化路由让 `name`、`params`、`query` 等路由信息在 TypeScript 中具备更严格的静态类型能力。
+
+它解决什么问题：随着路由规模增大，错误的路由名、漏传参数、参数类型错误会越来越难靠人工发现。
+
+什么时候用：
+
+- TypeScript 项目
+- 需要更强路由调用约束的大中型应用
+
+```ts
+// 概念示例：依赖项目启用对应类型化路由能力后
+router.push({
+  name: 'user-detail',
+  params: { id: '42' },
+})
+```
+
+常见注意点：类型化路由属于开发体验增强能力，而不是入门必需条件。基础路由心智模型没有建立前，不应先把重点放在类型生成链路上。来源：[类型化路由](https://router.vuejs.org/zh/guide/advanced/typed-routes.html)
+
+### 扩展 RouterLink
+
+一句话定义：扩展 `RouterLink` 用来在保留路由链接能力的同时，自定义更适合项目设计系统的链接组件。
+
+它解决什么问题：默认 `RouterLink` 已足够大多数场景，但在设计系统、外链兼容、非激活态样式、统一交互层封装中，往往需要更灵活的链接抽象。
+
+什么时候用：
+
+- 需要统一项目级导航链接组件
+- 同时兼容内链与外链
+- 需要更可控的激活态 / 非激活态样式
+
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { RouterLink, useLink } from 'vue-router'
+
+const props = defineProps({
+  ...RouterLink.props,
+  inactiveClass: String,
+})
+
+const { href, isActive, navigate } = useLink(props)
+
+const classes = computed(() =>
+  isActive.value ? 'link is-active' : `link ${props.inactiveClass || ''}`,
+)
+</script>
+
+<template>
+  <a :href="href" :class="classes" @click="navigate">
+    <slot />
+  </a>
+</template>
+```
+
+常见注意点：扩展 `RouterLink` 适合设计系统层，不适合为了小改样式就过度封装。来源：[扩展 RouterLink](https://router.vuejs.org/zh/guide/advanced/extending-router-link.html)
+
+### 导航故障
+
+一句话定义：导航故障描述的是一次导航没有按照预期完成时的结果，例如被取消、被重定向或目标与当前相同。
+
+它解决什么问题：并不是每次 `router.push()` 都一定成功进入目标页，应用需要知道某次导航是否真的完成。
+
+什么时候用：
+
+- 需要在导航后做明确反馈
+- 需要区分“跳转成功”和“被取消 / 被重定向”
+
+```ts
+import { isNavigationFailure } from 'vue-router'
+
+const failure = await router.push({ name: 'home' })
+
+if (failure && isNavigationFailure(failure)) {
+  console.log('navigation failed')
+}
+```
+
+常见注意点：把所有导航都假设为必然成功，是路由交互里的常见误判。涉及确认离开、权限、重复跳转时，导航故障需要被纳入控制流。来源：[导航故障](https://router.vuejs.org/zh/guide/advanced/navigation-failures.html)
+
+### 动态路由
+
+一句话定义：动态路由指在应用运行时添加、删除或调整路由记录。
+
+它解决什么问题：某些系统的导航结构并不是启动时静态固定的，例如权限菜单、插件模块、动态装载功能页。
+
+什么时候用：
+
+- 权限系统按用户角色动态挂载路由
+- 插件化后台
+- 某些功能模块运行时启用
+
+```ts
+router.addRoute({
+  path: '/admin',
+  name: 'admin',
+  component: () => import('@/pages/AdminPage.vue'),
+})
+```
+
+常见注意点：动态路由适合结构确实动态变化的系统，不应把静态路由也全部推迟到运行时组装。否则可维护性和可预测性都会下降。来源：[动态路由](https://router.vuejs.org/zh/guide/advanced/dynamic-routing.html)
+
+## 文末速查
+
+| 问题               | 优先想到的能力                       |
+| ------------------ | ------------------------------------ |
+| 页面跳转           | `router.push()` / `router.replace()` |
+| 详情页参数         | 动态路由匹配                         |
+| URL 与组件解耦     | 路由组件传参                         |
+| 权限校验           | 导航守卫 + `meta`                    |
+| 页面级拆包         | 路由懒加载                           |
+| 多层布局           | 嵌套路由                             |
+| 当前菜单高亮       | 匹配当前路由的链接                   |
+| 路由级过渡配置     | `meta` + RouterView 插槽 + 过渡动效  |
+| 导航失败判定       | 导航故障                             |
+| 运行时挂载权限模块 | 动态路由                             |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Vue Router 的核心不是“把 URL 对应到页面”，而是把页面结构、导航控制、参数输入和路由级工程能力组织成一套稳定的客户端路由体系。

@@ -1,0 +1,287 @@
+---
+title: Composables
+category: vue
+excerpt: 从组合式函数的抽离规则、返回值设计到副作用封装与项目组织，系统讲清 Vue 3 中逻辑复用和代码组织的主线。
+slug: vue-3-composables-system
+tags: [Vue 3, Composables, Composition API, Reusability]
+---
+
+{/* @format */}
+
+# Vue 3 Composables 体系
+
+Composition API 的真正价值，并不只是把 `data`、`methods`、`computed` 改写成函数调用，而是让逻辑可以按问题域重组。`Composables` 就是这套能力在工程中的具体落点。
+
+Vue 官方把 composable 定义为：**利用 Vue Composition API 来封装和复用有状态逻辑的函数**。这个定义里最重要的不是“函数”本身，而是“有状态逻辑的复用与组织”。
+
+来源：[Composables](https://vuejs.org/guide/reusability/composables.html)
+
+## Composable 到底解决什么问题
+
+在组件逐渐变复杂时，常见问题并不是模板太长，而是这些逻辑开始交织：
+
+- 请求与 loading 状态
+- 事件监听与清理
+- 筛选条件与分页
+- 表单校验与提交
+- 权限判断与功能开关
+
+如果这些逻辑全部直接堆在组件里，组件很快就会变成难以维护的“大 setup 函数”。Composable 的意义就是把“围绕同一问题域的逻辑”抽离出来。
+
+## 什么样的函数才算 Composable
+
+不是所有工具函数都算 composable。
+
+更准确的判断是：
+
+- 纯工具函数：只做计算，不依赖 Vue 响应式上下文
+- Composable：内部使用了 `ref`、`computed`、`watch`、生命周期钩子等 Composition API，并封装了一段可复用逻辑
+
+例如：
+
+```ts
+import { onMounted, onUnmounted, ref } from 'vue'
+
+export function useMouse() {
+  const x = ref(0)
+  const y = ref(0)
+
+  function update(event: MouseEvent) {
+    x.value = event.pageX
+    y.value = event.pageY
+  }
+
+  onMounted(() => window.addEventListener('mousemove', update))
+  onUnmounted(() => window.removeEventListener('mousemove', update))
+
+  return { x, y }
+}
+```
+
+这类函数既管理状态，又管理生命周期和副作用，因此它是标准的 composable。来源：[Composables](https://vuejs.org/guide/reusability/composables.html)
+
+## Composable 的命名与职责边界
+
+Vue 官方明确建议 composable 使用 `useXxx` 命名约定。
+
+这不仅是风格问题，更是认知提示：
+
+- 它告诉阅读者：这是一个组合式逻辑单元
+- 它让逻辑复用点更容易在项目中被发现
+
+但比命名更重要的是边界。一个稳定的 composable 通常只解决一类明确问题，例如：
+
+- `usePagination`
+- `useFetchList`
+- `useDialog`
+- `usePermission`
+
+如果一个 composable 同时处理请求、表单、权限、路由跳转和弹窗，那它只是把“大组件问题”搬进了“大函数问题”。
+
+## 什么时候该抽成 Composable
+
+通常有三个稳定信号：
+
+### 同一段有状态逻辑在多个组件重复出现
+
+这是最直观的抽离信号。
+
+### 单个组件内部逻辑已明显可按问题域拆分
+
+即使目前只在一个组件内使用，也可以为了可读性和组织结构抽离。
+
+### 逻辑包含状态 + 派生 + 副作用的稳定组合
+
+这类逻辑最适合成为 composable，因为它天然具备独立边界。
+
+Vue 官方也明确指出：抽取 composable 不只是为了复用，也是为了改善代码组织。来源：[Composables](https://vuejs.org/guide/reusability/composables.html)
+
+## 返回值为什么推荐是“普通对象 + refs”
+
+Vue 官方给出的推荐做法非常明确：composable 通常应返回一个**普通非响应式对象**，对象里放多个 refs。
+
+```ts
+export function useCounter() {
+  const count = ref(0)
+
+  function increment() {
+    count.value++
+  }
+
+  return { count, increment }
+}
+```
+
+这样设计的核心价值是：
+
+- 组件里可以安全解构
+- 解构后仍保留响应式连接
+
+```ts
+const { count, increment } = useCounter()
+```
+
+如果改成返回一个 `reactive()` 对象，调用方一旦直接解构，就可能丢失内部状态连接。来源：[Composables](https://vuejs.org/guide/reusability/composables.html)
+
+## 输入参数应该怎么设计
+
+Vue 官方建议，如果 composable 面向他人复用，最好能够同时接受：
+
+- 原始值
+- `ref`
+- getter
+
+并通过 `toValue()` 等方式做统一归一化。这背后的思路非常实用：composable 不应该把调用方式限制得过窄。
+
+```ts
+import { ref, toValue, watchEffect } from 'vue'
+
+export function useTitle(source: string | (() => string)) {
+  const title = ref('')
+
+  watchEffect(() => {
+    title.value = toValue(source)
+  })
+
+  return { title }
+}
+```
+
+这类设计让 composable 更容易被真正复用，而不是只能服务某一个局部调用场景。来源：[Composables](https://vuejs.org/guide/reusability/composables.html)
+
+## Composable 里可以做副作用吗
+
+可以。Vue 官方明确说明，在 composable 中执行副作用是合理的，例如：
+
+- 注册 DOM 事件监听
+- 发请求
+- 与外部系统同步
+
+但前提是必须遵守两个原则：
+
+- 在合适的生命周期里执行
+- 在卸载时做好清理
+
+这也是为什么 composable 不是普通工具函数。它能借助当前组件实例的上下文，把副作用生命周期跟随调用它的组件一起管理。
+
+## Composable 的使用限制
+
+Vue 官方明确指出，composable 应该只在以下上下文中同步调用：
+
+- `<script setup>`
+- 组件的 `setup()` 中
+- 某些生命周期钩子中
+
+原因很关键：只有在这些上下文里，Vue 才能确定当前活跃组件实例，从而正确关联：
+
+- 生命周期钩子
+- `watch` / `computed` 的自动清理
+- 组件卸载时的资源释放
+
+这也是为什么 composable 不能像普通工具函数那样在任意异步回调、普通模块顶层随意执行。来源：[Composables](https://vuejs.org/guide/reusability/composables.html)
+
+## Composable 与组件、Pinia 的边界
+
+这三个层级经常被混用，需要分清：
+
+### Composable
+
+解决逻辑复用和代码组织，通常偏组件作用域或可复用逻辑单元。
+
+### 组件
+
+解决视图结构和交互表现。
+
+### Pinia
+
+解决应用级共享状态组织。
+
+因此：
+
+- 需要复用逻辑，但不需要全局共享：优先 composable
+- 需要复用 UI 结构：优先组件
+- 需要应用级共享状态：优先 Pinia
+
+## 一个稳定的 Composable 写法
+
+```ts
+import { ref } from 'vue'
+
+export function usePagination(initialPage = 1, initialPageSize = 20) {
+  const page = ref(initialPage)
+  const pageSize = ref(initialPageSize)
+
+  function setPage(nextPage: number) {
+    page.value = nextPage
+  }
+
+  function reset() {
+    page.value = initialPage
+    pageSize.value = initialPageSize
+  }
+
+  return {
+    page,
+    pageSize,
+    setPage,
+    reset,
+  }
+}
+```
+
+这个模式有几个优点：
+
+- 状态清晰
+- 行为清晰
+- 返回值可解构
+- 组件接入成本低
+
+## 项目里怎么组织 Composables
+
+更稳定的目录组织通常是按问题域拆，而不是按 API 拆。
+
+例如：
+
+- `usePagination.ts`
+- `useDialog.ts`
+- `useUserFilters.ts`
+- `usePermission.ts`
+
+而不建议：
+
+- `useRefHelpers.ts`
+- `watchHelpers.ts`
+
+因为 composable 的边界应当服务业务问题或 UI 问题，而不是反映底层 API 名称。
+
+## 常见误区
+
+### 抽一个特别大的万能 composable
+
+这只是把复杂度从组件移动到另一个文件，没有真正改善结构。
+
+### 返回 reactive 对象再让调用方直接解构
+
+这很容易造成响应式连接丢失。
+
+### 把所有共享状态都做成 composable
+
+如果状态需要全局共享与统一写入路径，Pinia 更合适。
+
+### Composable 里注册副作用但不清理
+
+这会把内存泄漏和脏订阅从组件转移到复用逻辑层，问题更隐蔽。
+
+## 文末速查
+
+| 问题                | 优先判断        |
+| ------------------- | --------------- |
+| 需要复用有状态逻辑  | 抽 composable   |
+| 需要复用 UI 结构    | 抽组件          |
+| 需要全局共享状态    | 用 Pinia        |
+| composable 返回什么 | 普通对象 + refs |
+| composable 命名方式 | `useXxx`        |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Composable 的价值不只是“复用代码”，而是把组件中的状态、派生和副作用按问题域重组为可维护的逻辑单元。

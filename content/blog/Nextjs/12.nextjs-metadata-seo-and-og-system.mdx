@@ -1,0 +1,250 @@
+---
+title: Metadata 与 SEO
+category: nextjs
+excerpt: 围绕 metadata、generateMetadata、robots、sitemap、opengraph-image 与图标文件，系统讲清 Next.js App Router 的 SEO 与元数据主线。
+slug: nextjs-metadata-seo
+tags: [Next.js, Metadata, SEO, Open Graph, sitemap]
+---
+
+{/* @format */}
+
+# Next.js Metadata 与 SEO
+
+在 App Router 中，SEO 不再主要依赖手动操作 `<head>`，而是由框架提供统一的 Metadata 系统来描述页面标题、描述、Open Graph、图标、robots 与 sitemap。这样做的意义，不只是 API 更集中，而是让元数据和路由、数据获取、渲染边界保持一致。
+
+这篇文章的目标，是建立一个现代 Next.js SEO 判断框架：静态 metadata 什么时候够用，什么时候需要 `generateMetadata()`，文件式元数据入口分别适合什么场景，以及 SEO 与内容渲染之间的关系应该怎样理解。
+
+官方文档主线参考：
+
+- [Metadata and OG images](https://nextjs.org/docs/app/getting-started/metadata-and-og-images)
+- [generateMetadata](https://nextjs.org/docs/app/api-reference/functions/generate-metadata)
+- [Metadata Files](https://nextjs.org/docs/app/api-reference/file-conventions/metadata)
+
+## 先建立一个整体认知
+
+Next.js 的 Metadata 主线可以分成三层：
+
+- 页面与布局级 metadata 对象
+- 动态元数据：`generateMetadata()`
+- 文件式入口：`robots.ts`、`sitemap.ts`、`opengraph-image.tsx`、图标文件
+
+它们共同构成 SEO 能力，而不是彼此独立的零散配置。
+
+## metadata 对象
+
+一句话定义：`metadata` 对象用于声明页面或布局的静态元数据信息。
+
+它解决什么问题：许多页面的标题、描述、社交分享信息是稳定的，直接声明静态 metadata 最简洁。
+
+什么时候用：
+
+- 文档页
+- 固定营销页
+- 布局级站点基础信息
+
+```tsx
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Dashboard',
+  description: 'Manage your workspace',
+}
+
+export default function Page() {
+  return <div>Dashboard</div>
+}
+```
+
+常见注意点：metadata 更适合稳定信息；如果标题和描述依赖请求期或内容数据，就应考虑 `generateMetadata()`。
+
+## generateMetadata
+
+一句话定义：`generateMetadata()` 用于在渲染链路中按数据动态生成元数据。
+
+它解决什么问题：详情页标题、文章描述、商品分享图等往往依赖内容数据，不可能在构建时全部静态写死。
+
+什么时候用：
+
+- 文章详情页
+- 商品详情页
+- 动态分类页
+
+```tsx
+import type { Metadata } from 'next'
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}): Promise<Metadata> {
+  const { slug } = await params
+
+  return {
+    title: `Post: ${slug}`,
+    description: `Read ${slug}`,
+  }
+}
+```
+
+常见注意点：`generateMetadata()` 也是服务端逻辑的一部分，依赖数据时要和页面数据获取一起考虑，避免无意义重复查询。来源：[generateMetadata](https://nextjs.org/docs/app/api-reference/functions/generate-metadata)
+
+## 布局级与页面级 metadata
+
+一句话定义：metadata 可以定义在 layout，也可以定义在 page，并由框架按层级进行合并。
+
+它解决什么问题：站点级默认信息和页面级具体信息通常应分层管理，而不是每页都重复写完整头信息。
+
+什么时候用：
+
+- layout 定义全站默认标题模板、描述、基础 Open Graph
+- page 定义具体页面内容
+
+常见注意点：布局级 metadata 更适合全局默认值，页面级 metadata 更适合具体内容。不要把所有页面信息都强塞进根布局。
+
+## robots.ts
+
+一句话定义：`robots.ts` 是文件式 Metadata 入口，用于生成站点的 robots 规则。
+
+它解决什么问题：搜索引擎抓取策略不应靠手写静态文件分散维护，`robots.ts` 能把其纳入应用代码和环境配置体系。
+
+什么时候用：
+
+- 控制爬虫允许或禁止访问路径
+- 区分生产与预览环境策略
+
+```ts
+import type { MetadataRoute } from 'next'
+
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: {
+      userAgent: '*',
+      allow: '/',
+    },
+    sitemap: 'https://example.com/sitemap.xml',
+  }
+}
+```
+
+常见注意点：robots 是站点级策略，不应在普通页面逻辑里零散处理。
+
+## sitemap.ts
+
+一句话定义：`sitemap.ts` 是文件式 Metadata 入口，用于生成站点 sitemap。
+
+它解决什么问题：中大型站点的 URL 索引需要稳定输出，尤其是内容型站点和电商站点。
+
+什么时候用：
+
+- 博客、文档、电商、内容站
+- 动态生成可抓取页面索引
+
+```ts
+import type { MetadataRoute } from 'next'
+
+export default function sitemap(): MetadataRoute.Sitemap {
+  return [
+    {
+      url: 'https://example.com',
+      lastModified: new Date(),
+    },
+  ]
+}
+```
+
+常见注意点：sitemap 生成逻辑应基于真正可抓取、可访问的页面集合，而不是简单输出所有数据库记录。
+
+## opengraph-image.tsx
+
+一句话定义：`opengraph-image.tsx` 是用于生成 OG 分享图像的文件式入口。
+
+它解决什么问题：内容分享时的卡片图不应完全依赖静态素材，动态 OG 图片可以按文章、商品、作者等内容自动生成。
+
+什么时候用：
+
+- 博客分享图
+- 商品分享图
+- 个人主页、活动页动态卡片
+
+```tsx
+import { ImageResponse } from 'next/og'
+
+export const size = {
+  width: 1200,
+  height: 630,
+}
+
+export default function Image() {
+  return new ImageResponse(<div>Next.js</div>, size)
+}
+```
+
+常见注意点：OG 图像属于分享入口的一部分，不只是视觉加分项。它和 metadata 中的 openGraph 信息应该协同设计。
+
+## 图标文件
+
+一句话定义：如 `favicon.ico`、`icon.png`、`apple-icon.png` 等文件式入口用于为站点提供图标与设备图标。
+
+它解决什么问题：图标资源是站点基础元数据的一部分，适合通过约定式文件统一管理。
+
+什么时候用：
+
+- 浏览器标签页图标
+- Apple 设备图标
+- PWA 或站点基础品牌资源
+
+常见注意点：这些文件虽然简单，但属于 Metadata 主线的一部分，应统一管理而不是散落在普通静态资源目录中。
+
+## SEO 与内容获取的关系
+
+在动态页面中，元数据通常与内容数据共享同一份来源。一个更稳的做法通常是：
+
+- 页面内容和 metadata 都围绕同一内容主键读取
+- 复用服务端查询函数
+- 避免 metadata 和页面各自发起无关重复请求
+
+这条原则很重要，因为 SEO 并不是页面渲染的附属物，而是页面语义的一部分。
+
+## 一个更稳的使用顺序
+
+在真实项目里，更稳定的判断顺序通常是：
+
+- 默认先用静态 `metadata`
+- 动态内容页再引入 `generateMetadata()`
+- 站点级抓取和分享入口用文件式 metadata
+- 元数据与页面内容共享同一领域模型或查询层
+
+这样既能保持结构清晰，也能避免 SEO 配置四处漂移。
+
+## 常见误区
+
+### 误区一：SEO 只需要标题和 description
+
+在现代站点中，robots、sitemap、Open Graph、图标和分享图同样属于主线能力。
+
+### 误区二：所有页面都应该手动在组件里操作 `<head>`
+
+App Router 已经提供统一 Metadata 系统，手动散写通常会破坏结构一致性。
+
+### 误区三：`generateMetadata()` 只是“动态 title”
+
+它的价值是把元数据纳入服务端渲染与数据获取链路，而不只是改标题。
+
+### 误区四：sitemap 只要有就行
+
+真正重要的是它能否准确反映站点中应被索引的内容，而不是机械输出全部路径。
+
+## 文末速查
+
+| 场景 | 优先想到的能力 |
+| --- | --- |
+| 静态页面标题和描述 | `metadata` |
+| 动态详情页元数据 | `generateMetadata()` |
+| 搜索引擎抓取策略 | `robots.ts` |
+| 站点 URL 索引 | `sitemap.ts` |
+| 社交分享图 | `opengraph-image.tsx` |
+| 标签页与设备图标 | 图标文件入口 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 中的 SEO 不应被理解成“页面头标签细节”，而应被看作和路由、内容、分享入口一起设计的站点语义系统。

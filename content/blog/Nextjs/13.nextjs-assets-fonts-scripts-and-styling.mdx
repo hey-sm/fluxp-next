@@ -1,0 +1,253 @@
+---
+title: 资源与样式
+category: nextjs
+excerpt: 围绕 next/image、next/font、next/script、public、CSS Modules、Global CSS 与 Tailwind 接入边界，系统讲清 Next.js App Router 中资源与样式的工程主线。
+slug: nextjs-assets-fonts-scripts-and-styling
+tags: [Next.js, Image, Font, Script, CSS Modules]
+---
+
+{/* @format */}
+
+# Next.js 资源与样式
+
+在 Next.js 中，图片、字体、脚本和样式并不是纯静态资源层面的选择，它们会直接影响首屏体积、布局稳定性、交互就绪时间和整体工程结构。很多项目的性能问题，并不是渲染链路本身有多复杂，而是资源引入方式从一开始就没有走框架主线。
+
+这篇文章的目标，是把资源与样式放回 Next.js 的现代工程上下文中理解：哪些资源应该交给框架组件，哪些资源应该走 `public`，样式应该如何分层，为什么字体和脚本的接入方式会直接影响用户感知性能。
+
+官方文档主线参考：
+
+- [Images](https://nextjs.org/docs/app/getting-started/images)
+- [Fonts](https://nextjs.org/docs/app/getting-started/fonts)
+- [CSS](https://nextjs.org/docs/app/getting-started/css)
+- [Script Component](https://nextjs.org/docs/app/api-reference/components/script)
+
+## 资源层的整体分工
+
+可以先把这一层分成四类：
+
+- 图片：`next/image`
+- 字体：`next/font`
+- 第三方脚本：`next/script`
+- 样式：Global CSS、CSS Modules，以及 Tailwind 等方案
+
+它们的共同目标不是“写法好看”，而是让资源加载更可控、页面更稳定。
+
+## next/image
+
+一句话定义：`next/image` 是 Next.js 的图片组件，用于提供尺寸感知、懒加载、优化输出和更稳定的图片渲染体验。
+
+它解决什么问题：图片经常是页面中最重的资源类型，如果尺寸、加载策略和输出方式不明确，很容易导致 CLS、LCP 和带宽浪费问题。
+
+什么时候用：
+
+- 文章封面
+- 产品图
+- Banner、头像、列表缩略图
+
+```tsx
+import Image from 'next/image'
+
+export default function Hero() {
+  return (
+    <Image
+      src="/hero.png"
+      alt="Hero"
+      width={1280}
+      height={720}
+      priority
+    />
+  )
+}
+```
+
+常见注意点：`Image` 的关键不只是“换个组件”，而是明确图片尺寸、显示方式和远程域配置。没有尺寸认知的图片优化通常会变成新的布局问题。
+
+## public
+
+一句话定义：`public` 用于直接按原始 URL 暴露静态资源。
+
+它解决什么问题：有些资源并不需要模块导入，例如下载文件、固定图标或某些直接访问的静态内容。
+
+什么时候用：
+
+- 下载附件
+- 某些固定 URL 的图片
+- 不需要打包处理的静态文件
+
+```text
+public/
+  logo.png
+  brochure.pdf
+```
+
+常见注意点：`public` 适合“路径稳定的静态资源”，并不意味着应用内显示图片都应该直接回退成普通 `<img>`。
+
+## next/font
+
+一句话定义：`next/font` 是 Next.js 的字体优化主线，用于自托管字体并控制加载行为。
+
+它解决什么问题：字体资源如果处理不当，很容易带来闪烁、阻塞和不稳定的排版表现。`next/font` 将字体加载纳入框架优化链路。
+
+什么时候用：
+
+- 站点主字体
+- 标题字体与代码字体
+- 希望减少外部字体依赖时
+
+```tsx
+import { Geist } from 'next/font/google'
+
+const geist = Geist({
+  subsets: ['latin'],
+})
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html lang="zh-CN" className={geist.className}>
+      <body>{children}</body>
+    </html>
+  )
+}
+```
+
+常见注意点：字体是全站视觉骨架的一部分，适合在根布局或较高层边界统一定义，而不是散落在页面局部重复引入。
+
+## next/script
+
+一句话定义：`next/script` 用于以受控方式加载第三方脚本，并指定加载策略。
+
+它解决什么问题：第三方脚本常常是性能和稳定性的主要风险源，直接散写 `<script>` 容易失去时机控制。
+
+什么时候用：
+
+- 分析统计
+- 客服 SDK
+- 支付、地图、广告等第三方脚本
+
+```tsx
+import Script from 'next/script'
+
+export default function ThirdParty() {
+  return (
+    <Script
+      src="https://example.com/sdk.js"
+      strategy="afterInteractive"
+    />
+  )
+}
+```
+
+常见注意点：不要把所有脚本都默认放进最早时机。脚本接入策略本身就是性能设计的一部分。
+
+## Global CSS
+
+一句话定义：Global CSS 用于定义全站级样式、设计 token、reset 和基础元素风格。
+
+它解决什么问题：有些样式天然属于全站基线，例如主题变量、排版基础、全局颜色和布局重置。
+
+什么时候用：
+
+- CSS variables
+- 全局 reset
+- `body`、`html`、基础元素样式
+
+```css
+:root {
+  --background: #ffffff;
+  --foreground: #111111;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+```
+
+常见注意点：Global CSS 适合基线和 token，不适合承载大量页面局部样式，否则很快会退回全局污染。
+
+## CSS Modules
+
+一句话定义：CSS Modules 用于为组件提供局部作用域样式，避免类名全局冲突。
+
+它解决什么问题：随着组件数量增加，普通全局样式会迅速变得脆弱，而 CSS Modules 能让组件样式和结构更自然地 colocate。
+
+什么时候用：
+
+- 页面专属组件
+- 需要局部作用域的组件样式
+- 不想引入额外样式方案时
+
+```tsx
+import styles from './card.module.css'
+
+export function Card() {
+  return <section className={styles.card}>Card</section>
+}
+```
+
+常见注意点：CSS Modules 的价值在于局部边界明确，而不是把所有视觉设计问题都变成类名隔离问题。
+
+## Tailwind 接入边界
+
+一句话定义：Tailwind 在 Next.js 中是一种常见样式方案，但它属于样式实现选择，而不是框架核心能力。
+
+它解决什么问题：Tailwind 可以提高原子化组合效率，但项目仍然需要明确全局 token、组件边界和复用策略。
+
+什么时候用：
+
+- 设计系统节奏明确
+- 团队已采用 utility-first 风格
+- 需要快速搭建高一致性 UI
+
+常见注意点：不要把 Tailwind 的存在当作“无需考虑样式架构”的理由。它只能改变书写方式，不能替代样式层设计。
+
+## 一个更稳的资源组织顺序
+
+在真实项目里，更稳定的做法通常是：
+
+- 图片优先 `next/image`
+- 字体优先 `next/font`
+- 第三方脚本优先 `next/script`
+- 全站基线样式放 Global CSS
+- 组件局部样式放 CSS Modules 或团队既定方案
+- 只有真正需要固定 URL 暴露的资源才放 `public`
+
+这条顺序的重点，是让资源与样式都进入框架主线，而不是每类资源都用最原始方式直接处理。
+
+## 常见误区
+
+### 误区一：资源优化只和图片有关
+
+字体、脚本和样式入口同样会显著影响首屏和交互体验。
+
+### 误区二：有了 `public`，所有静态资源都应该放进去
+
+不准确。很多显示型资源仍应优先通过框架组件接入。
+
+### 误区三：样式方案只是团队偏好，不影响架构
+
+全局样式和局部样式边界是否清晰，会直接影响长期维护成本。
+
+### 误区四：第三方脚本只要能跑就行
+
+脚本的加载时机、优先级和是否阻塞交互，同样属于性能设计的一部分。
+
+## 文末速查
+
+| 场景 | 优先想到的能力 |
+| --- | --- |
+| 页面图片 | `next/image` |
+| 全站字体 | `next/font` |
+| 第三方脚本 | `next/script` |
+| 固定 URL 静态资源 | `public` |
+| 全站基线和 token | Global CSS |
+| 组件局部样式 | CSS Modules |
+| 原子化样式体系 | Tailwind 等团队方案 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Next.js 的资源与样式主线，本质上是在回答“哪些内容应该被框架感知并优化”，而不是简单替换几个标签。

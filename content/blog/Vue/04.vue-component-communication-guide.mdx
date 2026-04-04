@@ -1,0 +1,288 @@
+---
+title: 组件通信
+category: vue
+excerpt: 从 props、emits、v-model、provide/inject 到 slots，系统讲清 Vue 3 组件之间如何传值、回传、注入与分发内容。
+slug: vue-3-component-communication
+tags: [Vue 3, Props, Emits, v-model, Slots]
+---
+
+{/* @format */}
+
+# Vue 3 组件通信体系
+
+Vue 组件开发的核心问题之一，不是“组件怎么写”，而是“组件之间怎么协作”。一个项目是否容易维护，往往不取决于组件数量，而取决于通信边界是否清晰：哪些数据是输入，哪些是输出，哪些是跨层共享，哪些其实不该由组件通信来解决。
+
+在现代 Vue 3 中，最常见的通信手段主要有五类：
+
+- `props`
+- `emits`
+- `v-model`
+- `provide / inject`
+- `slots`
+
+它们不是互相替代关系，而是分别解决不同层次的问题。
+
+## 先建立一个选择框架
+
+可以先用一句话理解这五种能力：
+
+- `props`：父传子
+- `emits`：子通知父
+- `v-model`：受控输入的简化协作
+- `provide / inject`：跨层注入
+- `slots`：由父级决定子组件内部某部分内容
+
+这五者对应的是五种不同的边界问题。如果边界判断错了，组件很容易走向难维护的“万能组件”。
+
+## props
+
+一句话定义：`props` 是父组件向子组件传递输入数据的正式接口。
+
+它解决什么问题：把组件所需的外部输入明确建模，而不是让子组件隐式依赖父级环境。
+
+什么时候用：
+
+- 所有从父级输入到子级的数据
+- 可配置组件的外部 API
+- 列表项、卡片、表单字段等接收外部数据的场景
+
+```vue
+<!-- UserCard.vue -->
+<script setup lang="ts">
+defineProps<{
+  name: string
+  role?: string
+}>()
+</script>
+
+<template>
+  <article>
+    <h3>{{ name }}</h3>
+    <p>{{ role ?? '未设置角色' }}</p>
+  </article>
+</template>
+```
+
+常见注意点：props 是只读输入，子组件不应该直接修改它。Vue 官方会对直接修改 props 发出警告。若子组件需要基于 props 形成本地可变状态，应显式复制为本地状态。来源：[Props](https://vuejs.org/guide/components/props)
+
+## emits
+
+一句话定义：`emits` 用来声明子组件向父组件抛出的事件接口。
+
+它解决什么问题：当子组件内部交互完成后，需要把结果、动作或请求通知父组件时，`emits` 提供了标准的向上通信路径。
+
+什么时候用：
+
+- 点击选择、确认提交、状态切换
+- 通知父级某个动作已发生
+- 自定义输入组件回传值变化
+
+```vue
+<!-- StatusSelect.vue -->
+<script setup lang="ts">
+const emit = defineEmits<{
+  change: [value: 'draft' | 'published']
+}>()
+
+function select(value: 'draft' | 'published') {
+  emit('change', value)
+}
+</script>
+
+<template>
+  <button @click="select('draft')">草稿</button>
+  <button @click="select('published')">发布</button>
+</template>
+```
+
+常见注意点：`emits` 应表达“事件发生了”，而不是让子组件直接替父组件管理外层状态。子组件的职责是通知，不是越权修改上层状态。来源：[Component Events](https://vuejs.org/guide/components/events)
+
+## props + emits 是最基本的通信主线
+
+绝大多数父子组件协作都可以先回到这条主线：
+
+- 父组件通过 `props` 提供输入
+- 子组件通过 `emits` 通知变化
+
+如果一个场景其实只需要这条链路，就不要一开始上 `provide/inject` 或全局 store。很多项目的复杂度，并不是因为组件太多，而是因为过早跳过了最简单且最稳定的通信模型。
+
+## v-model
+
+一句话定义：`v-model` 是组件受控值输入与更新事件回传的语法糖。
+
+它解决什么问题：把“父传当前值 + 子抛更新事件”压缩成统一写法，让表单组件协作更直接。
+
+什么时候用：
+
+- 自定义输入框、选择器、弹窗开关
+- 任何“父组件持有值，子组件负责编辑”的场景
+
+```vue
+<!-- SearchBox.vue -->
+<script setup lang="ts">
+const props = defineProps<{
+  modelValue: string
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+}>()
+</script>
+
+<template>
+  <input
+    :value="props.modelValue"
+    @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+  />
+</template>
+```
+
+使用方：
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+import SearchBox from './SearchBox.vue'
+
+const keyword = ref('')
+</script>
+
+<template>
+  <SearchBox v-model="keyword" />
+</template>
+```
+
+常见注意点：`v-model` 简化的是模板调用方式，不是取消了单向数据流。真实模型依然是：
+
+- 父级传 `modelValue`
+- 子级抛 `update:modelValue`
+
+来源：[Component v-model](https://vuejs.org/guide/components/v-model)
+
+## provide / inject
+
+一句话定义：`provide / inject` 是 Vue 的依赖注入机制，用来把某个值跨越中间层组件传给后代。
+
+它解决什么问题：有些值属于同一棵组件树的共享上下文，但又不适合层层 props 透传。
+
+什么时候用：
+
+- 表单容器给表单项提供上下文
+- 主题、语言、配置在局部组件树中共享
+- 组件库内部的父子协作协议
+
+```vue
+<!-- FormContainer.vue -->
+<script setup lang="ts">
+import { provide, ref } from 'vue'
+
+const disabled = ref(false)
+
+provide('formDisabled', disabled)
+</script>
+
+<template>
+  <slot />
+</template>
+```
+
+```vue
+<!-- FormItem.vue -->
+<script setup lang="ts">
+import { inject } from 'vue'
+
+const disabled = inject('formDisabled')
+</script>
+
+<template>
+  <input :disabled="disabled" />
+</template>
+```
+
+常见注意点：`provide / inject` 适合解决跨层上下文，不适合拿来替代完整状态管理。如果共享状态已经跨页面、跨区域、跨功能模块扩散，应优先考虑 Pinia。来源：[Provide / Inject](https://vuejs.org/guide/components/provide-inject.html)
+
+## slots
+
+一句话定义：`slots` 用来让父组件把一段内容“插入”到子组件预留的位置中。
+
+它解决什么问题：有些组件负责布局和结构，但内部某些区域的具体内容应由调用方决定，这时用 props 传字符串或布尔值往往已经不够了。
+
+什么时候用：
+
+- 弹窗、卡片、表格、面板这类容器型组件
+- 需要父级传入可组合内容
+- 组件库中的内容分发
+
+```vue
+<!-- BaseCard.vue -->
+<template>
+  <section class="card">
+    <header class="card-header">
+      <slot name="header" />
+    </header>
+    <div class="card-body">
+      <slot />
+    </div>
+  </section>
+</template>
+```
+
+```vue
+<template>
+  <BaseCard>
+    <template #header>
+      <h2>订单信息</h2>
+    </template>
+
+    <p>这里是订单正文内容</p>
+  </BaseCard>
+</template>
+```
+
+常见注意点：`slots` 解决的是“内容分发”，不是“数据传递”。如果你的目标只是传一个简单值，优先考虑 `props`；只有当父级需要控制一段结构化内容时，才应该使用 `slots`。来源：[Slots](https://vuejs.org/guide/components/slots.html)
+
+## 什么时候该停在组件通信，什么时候该上状态管理
+
+组件通信解决的是局部协作问题，而不是所有共享状态问题。
+
+可以先用下面这套判断：
+
+- 父子或近邻组件协作：`props` + `emits`
+- 受控输入组件：`v-model`
+- 同一棵组件树局部上下文：`provide / inject`
+- 容器型组件内容分发：`slots`
+- 跨页面、跨区域、跨模块共享：考虑 Pinia
+
+如果把所有共享问题都塞进组件通信层，组件边界会越来越不清晰。
+
+## 常见误区
+
+### 子组件直接修改 props
+
+这会破坏单向数据流，让状态来源变得不清楚。
+
+### 用 provide / inject 做全局状态
+
+它适合局部树上下文，不适合承担完整全局状态组织职责。
+
+### 用 slots 传简单值
+
+这是把“内容分发问题”和“数据输入问题”混为一谈。
+
+### 所有表单组件都手写 props + change，不用 v-model
+
+这会让调用层样板代码不断膨胀。只要模型语义清晰，`v-model` 通常是更自然的接口。
+
+## 文末速查
+
+| 场景                       | 优先想到的通信方式 |
+| -------------------------- | ------------------ |
+| 父给子传数据               | `props`            |
+| 子通知父组件               | `emits`            |
+| 自定义输入组件双向协作     | `v-model`          |
+| 跨多层后代共享局部上下文   | `provide / inject` |
+| 父级决定子组件内部某块内容 | `slots`            |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Vue 组件通信的关键不是 API 数量，而是先分清你要解决的是“传值”“回传”“跨层注入”还是“内容分发”。

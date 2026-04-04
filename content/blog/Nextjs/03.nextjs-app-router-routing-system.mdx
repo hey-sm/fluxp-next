@@ -1,0 +1,273 @@
+---
+title: 路由
+category: nextjs
+excerpt: 围绕 route segment、嵌套路由、动态路由、route groups、parallel routes、intercepting routes 与导航主线，系统讲清 Next.js App Router 的路由模型。
+slug: nextjs-app-router-routing
+tags: [Next.js, App Router, Routing, Dynamic Routes, Parallel Routes]
+---
+
+{/* @format */}
+
+# Next.js App Router 路由
+
+App Router 的路由模型不是对传统前端路由的简单封装，而是一套和文件系统、布局层级、加载边界、服务端渲染直接耦合的结构。理解这套模型，是学习 Next.js 其余能力的前提，因为布局、缓存、Streaming、错误边界都依附在路由段上运行。
+
+这篇文章聚焦 App Router 主线，不展开 Pages Router，也不把注意力放在旧的 `useRouter` 心智上。目标是建立一套更接近官方语义的判断框架：什么是 route segment，嵌套关系如何形成，动态参数、路由分组、并行路由和拦截路由分别解决什么问题。
+
+官方文档主线参考：
+
+- [Layouts and Pages](https://nextjs.org/docs/app/getting-started/layouts-and-pages)
+- [Linking and Navigating](https://nextjs.org/docs/app/getting-started/linking-and-navigating)
+- [Route Groups](https://nextjs.org/docs/app/building-your-application/routing/route-groups)
+
+## 先建立一个核心认知
+
+App Router 的路由可以理解为三层：
+
+- URL 层：由目录段决定
+- 组件树层：由 `layout.tsx`、`page.tsx`、`template.tsx` 等文件组成
+- 交互层：由 `Link`、客户端导航、预取与缓存共同完成
+
+它的关键不在“声明一个路由表”，而在“通过目录树直接形成路由树与组件树”。
+
+## Route Segment
+
+一句话定义：route segment 就是 `app` 目录中的一个路由段目录，它会映射到 URL 的一个片段。
+
+它解决什么问题：Next.js 不再要求手写独立路由配置，而是让目录层级直接表达路径层级。
+
+什么时候用：
+
+- 定义任意新页面路径
+- 构建多层嵌套路由
+- 为某个路径段附加布局或特殊文件
+
+```text
+app/
+  dashboard/
+    settings/
+      page.tsx
+```
+
+这里会形成 `/dashboard/settings`。
+
+常见注意点：目录本身定义的是段，但真正可访问的页面还需要 `page.tsx`。只有目录而没有页面入口，不会自动成为可访问 UI。
+
+## 嵌套路由
+
+一句话定义：嵌套路由是由目录层级天然形成的父子路由关系。
+
+它解决什么问题：复杂应用往往存在共享导航、共享筛选区、共享外壳布局，嵌套路由让这些共享结构不必反复重渲染。
+
+什么时候用：
+
+- 仪表盘和后台
+- 文档站多级页面
+- 列表页与子设置页
+
+```text
+app/
+  dashboard/
+    layout.tsx
+    page.tsx
+    settings/
+      page.tsx
+```
+
+常见注意点：在嵌套路由里，共享的不只是路径结构，还有布局层级和部分缓存行为。因此目录设计应反映真实的 UI 共享关系，而不仅仅是 URL 美观。
+
+## 动态路由
+
+一句话定义：动态路由通过 `[segment]` 目录捕获 URL 参数。
+
+它解决什么问题：详情页、分类页和用户页都需要从 URL 中读取动态标识，而不可能为每个值手写独立目录。
+
+什么时候用：
+
+- 博客详情页
+- 商品详情页
+- 用户主页、订单页
+
+```text
+app/
+  blog/
+    [slug]/
+      page.tsx
+```
+
+```tsx
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}) {
+  const { slug } = await params
+  return <div>{slug}</div>
+}
+```
+
+常见注意点：动态参数变化时，布局层和页面层的复用行为需要结合具体边界理解，不能简单地把它当成“React Router 的 path param”。来源：[Dynamic Segments](https://nextjs.org/docs/app/api-reference/file-conventions/dynamic-routes)
+
+## Catch-all 与 Optional Catch-all
+
+一句话定义：`[...slug]` 用于捕获多个连续路由段，`[[...slug]]` 则允许这一组参数本身为空。
+
+它解决什么问题：有些路径不是固定层级，而是文档树、分类树或嵌套筛选路径。
+
+什么时候用：
+
+- 文档目录型站点
+- 多层分类路径
+- 可选深度路径结构
+
+```text
+app/
+  docs/
+    [...slug]/
+      page.tsx
+```
+
+常见注意点：只有当路径层级本身不固定时才应使用 catch-all；能用普通静态段和单一动态段表达的场景，不要过早升级。
+
+## Route Groups
+
+一句话定义：Route Groups 通过 `(group)` 目录把路由按逻辑分组，同时不进入最终 URL。
+
+它解决什么问题：一个站点常常需要多个布局域和业务分区，但不希望这些分区名污染路径结构。
+
+什么时候用：
+
+- 营销站与后台共存
+- 同层不同布局
+- 大型项目按团队或领域分区
+
+```text
+app/
+  (marketing)/
+    about/
+      page.tsx
+  (app)/
+    dashboard/
+      page.tsx
+```
+
+常见注意点：Route Groups 不改变 URL，因此不同 group 中的同名路由不能解析到同一路径，否则会产生冲突。
+
+## Parallel Routes
+
+一句话定义：Parallel Routes 允许在同一视图中并行渲染多个独立路由槽位。
+
+它解决什么问题：某些界面不是单一页面树，而是多个区域各自有独立导航状态和加载边界，例如 dashboard 多面板、收件箱主视图与侧边详情。
+
+什么时候用：
+
+- 多面板管理台
+- 并列区域各自可导航的复杂界面
+- 模态、侧栏、主内容并行组合
+
+```text
+app/
+  dashboard/
+    @analytics/
+      page.tsx
+    @team/
+      page.tsx
+    layout.tsx
+```
+
+常见注意点：Parallel Routes 不是普通双栏布局替代品。只有当不同区域确实需要独立的路由状态与加载边界时，它才有价值。
+
+## Intercepting Routes
+
+一句话定义：Intercepting Routes 用于在当前布局上下文中拦截并展示另一路由，常用于 modal 等覆盖式导航。
+
+它解决什么问题：有些交互既希望有独立 URL，又不希望完全离开当前上下文，例如在列表页点开详情弹层。
+
+什么时候用：
+
+- 图片预览弹层
+- 列表页上打开详情 modal
+- 保留背景上下文的覆盖式导航
+
+```text
+app/
+  feed/
+    page.tsx
+    (..)photo/
+      [id]/
+        page.tsx
+```
+
+常见注意点：Intercepting Routes 是一种高级路由模式，价值在于同时保留 URL 语义与当前上下文，而不是单纯为了“弹窗更酷”。
+
+## 导航主线
+
+一句话定义：App Router 的导航主线由 `Link`、客户端导航、预取和路由缓存共同组成。
+
+它解决什么问题：Next.js 希望导航不再只是 URL 变化，而是带着布局复用、数据预取和更快交互感知的一整套链路。
+
+什么时候用：
+
+- 页面内站内跳转
+- 菜单、分页、列表进入详情页
+- 需要让后续导航更即时的常见路径
+
+```tsx
+import Link from 'next/link'
+
+export default function Nav() {
+  return (
+    <nav>
+      <Link href="/dashboard">Dashboard</Link>
+      <Link href="/settings">Settings</Link>
+    </nav>
+  )
+}
+```
+
+常见注意点：导航体验不仅受 `Link` 影响，也受路由是否静态、是否预取成功、边界是否拆分得当影响。不要把所有导航问题都归因到路由组件本身。来源：[Linking and Navigating](https://nextjs.org/docs/app/getting-started/linking-and-navigating)
+
+## 一条更稳定的路由设计顺序
+
+在真实项目中，设计 App Router 路由时更稳的顺序通常是：
+
+- 先按 URL 和 UI 共享关系划出基础段
+- 再决定哪些段需要独立布局
+- 再决定是否需要动态段
+- 只有当普通嵌套已不足以表达时，再引入 Route Groups、Parallel Routes 和 Intercepting Routes
+
+这个顺序很重要，因为高级路由模式越强，心智成本也越高。应该先保证基础路由树清晰，再考虑高级模式。
+
+## 常见误区
+
+### 误区一：App Router 只是把 React Router 改成文件路由
+
+不准确。它还把布局、错误边界、加载边界和部分缓存语义一并绑定到路由段。
+
+### 误区二：所有目录都天然等于页面
+
+不准确。只有带 `page.tsx` 的叶子段才会形成页面 UI。
+
+### 误区三：Route Groups 适合一切目录分组
+
+它适合需要布局域或逻辑分区的场景，不适合为了“目录整洁”无差别套用。
+
+### 误区四：Parallel Routes 只是高级布局写法
+
+它真正解决的是“多个区域各自有独立路由状态”的问题，而不是普通的双栏排版问题。
+
+## 文末速查
+
+| 需求 | 优先想到的路由能力 |
+| --- | --- |
+| 定义普通页面路径 | route segment + `page.tsx` |
+| 建立多层路径关系 | 嵌套路由 |
+| 从 URL 读取标识 | 动态路由 |
+| 组织分区但不改 URL | Route Groups |
+| 一个页面并行承载多个独立槽位 | Parallel Routes |
+| 在当前上下文中展示另一路由 | Intercepting Routes |
+| 站内高性能导航 | `Link` + 预取主线 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 的“路由”并不是单纯的 URL 映射，而是页面树、布局树、加载边界和导航体验共同作用的结构化模型。

@@ -1,0 +1,308 @@
+---
+title: Scheduler
+category: react
+excerpt: React Scheduler 的调度机制，包括优先级、普通任务与延时任务、taskQueue 与 timerQueue，以及它如何支撑现代 React 渲染。
+slug: react-scheduler-guide
+tags: [React, Scheduler, Priority, Concurrent Rendering, Fiber]
+---
+
+{/* @format */}
+
+# React Scheduler 调度机制指南
+
+在现代 React 中，`Fiber` 解决的是“渲染工作如何被拆成可管理的工作单元”，而 `Scheduler` 解决的是“这些工作单元什么时候执行、先执行谁、是否应该暂时让出主线程”。如果没有调度层，React 即使拥有可中断的 Fiber 结构，也很难真正实现优先级控制、时间切片和更平滑的交互体验。
+
+本文聚焦 React 内部的 `Scheduler` 机制，重点回答两个最关键的问题：
+
+- React 如何处理普通任务
+- React 如何处理带延迟的任务
+
+围绕这两个问题，文章会进一步解释优先级、过期时间、`taskQueue`、`timerQueue`、主循环与让出执行权的逻辑。需要先说明的是，`scheduler` 包虽然对外暴露了一组 `unstable_*` API，但其 README 明确写明公共 API 仍未最终稳定。对应用开发者而言，它主要应被理解为 React 内部调度模型的基础，而不是日常业务代码的首选 API。来源：`scheduler` 官方 README。  
+链接：https://www.npmjs.com/package/scheduler
+
+## Scheduler 是什么
+
+`Scheduler` 可以准确地定义为：  
+React 所依赖的协作式调度层，用于在浏览器环境中安排任务的执行时机、优先级和让出策略。
+
+它的核心职责包括：
+
+- 为任务分配优先级
+- 决定任务是立刻进入可执行队列，还是先等待一段时间
+- 在主线程繁忙时决定是否应当暂停当前工作并稍后继续
+- 保证更高优先级任务能够比低优先级任务更早得到处理
+
+因此，`Scheduler` 不是简单的“任务队列封装”，而是现代 React 并发渲染调度能力的基础设施。
+
+## 为什么 React 需要 Scheduler
+
+如果没有调度层，React 更新流程会面临几个直接问题：
+
+- 一旦开始处理更新，就更容易长时间占用主线程
+- 无法细粒度区分紧急更新与可延后更新
+- 很难在大型组件树上平衡响应性与吞吐量
+- 无法优雅处理“现在先别执行，过一段时间再开始”的延时任务
+
+Fiber 让 React 渲染工作变成“可切分的工作单元”，而 Scheduler 则负责决定这些工作单元何时执行。两者配合后，现代 React 才能建立下面这套能力：
+
+- 紧急更新优先执行
+- 普通更新可以被分片处理
+- 延时任务不会提前进入执行链路
+- 渲染过程在必要时可以暂时让出主线程
+
+## Scheduler 的核心数据模型
+
+从当前项目实际安装的 `scheduler@0.27.0` 实现来看，调度的核心不是一个简单 FIFO 队列，而是两组最小堆结构：
+
+- `taskQueue`：可立即执行的任务堆
+- `timerQueue`：尚未到开始时间的延时任务堆
+
+这两个“队列”在实现上都通过堆来维护最小值优先，因此更准确地说，它们是两组按不同排序键组织的任务堆。
+
+一个任务对象至少包含这些关键信息：
+
+- `id`：任务编号
+- `callback`：真正需要执行的工作
+- `priorityLevel`：任务优先级
+- `startTime`：任务允许开始执行的时间
+- `expirationTime`：任务过期时间
+- `sortIndex`：在堆中的排序依据
+
+其中最关键的是两个时间点：
+
+- `startTime`：什么时候可以开始执行
+- `expirationTime`：最晚应该在什么时候之前被处理
+
+这意味着 Scheduler 面对任务时，并不只是问“它是什么优先级”，还会问两件事：
+
+- 现在能不能开始
+- 如果还不开始，什么时候会变成过期任务
+
+## 优先级与超时窗口
+
+在当前 `scheduler` 实现中，优先级对应着不同的超时窗口。根据 `scheduler.development.js` 中 `unstable_scheduleCallback` 的实现，可概括为：
+
+| 优先级        | 常量                            | 超时窗口         |
+| ------------- | ------------------------------- | ---------------- |
+| Immediate     | `unstable_ImmediatePriority`    | `-1`             |
+| User Blocking | `unstable_UserBlockingPriority` | `250ms`          |
+| Normal        | `unstable_NormalPriority`       | `5000ms`         |
+| Low           | `unstable_LowPriority`          | `10000ms`        |
+| Idle          | `unstable_IdlePriority`         | 很大的近似无限值 |
+
+这里的“超时窗口”并不是任务一定会等这么久后才执行，而是用于计算 `expirationTime`。如果任务迟迟没有得到执行，超过这个时间后，它就会被当作更紧迫的任务来对待。
+
+## 普通任务与延时任务
+
+这是理解 Scheduler 的关键分水岭。
+
+### 普通任务：立即进入 taskQueue
+
+如果调度时没有指定正数 `delay`，或者 `delay` 小于等于 `0`，任务会被视为普通任务。此时：
+
+- `startTime = currentTime`
+- `expirationTime = startTime + timeout`
+- `sortIndex = expirationTime`
+- 任务直接进入 `taskQueue`
+
+也就是说，普通任务从一开始就是“可执行”的，只是它在可执行任务中的排序，取决于过期时间和优先级。
+
+可以用一段伪代码概括：
+
+```ts
+scheduleCallback(priority, callback)
+
+startTime = now()
+expirationTime = startTime + priorityTimeout
+
+push(taskQueue, {
+  callback,
+  priority,
+  startTime,
+  expirationTime,
+  sortIndex: expirationTime,
+})
+```
+
+进入 `taskQueue` 后，Scheduler 会尽快安排一次宿主回调，让主循环开始处理这些任务。
+
+### 延时任务：先进入 timerQueue
+
+如果调度时传入了正数 `delay`，任务不会立刻进入执行队列，而是先进入 `timerQueue`。
+
+```ts
+scheduleCallback(priority, callback, { delay: 1000 })
+```
+
+此时任务的处理逻辑变为：
+
+- `startTime = currentTime + delay`
+- `expirationTime = startTime + timeout`
+- `sortIndex = startTime`
+- 先进入 `timerQueue`
+
+这里有一个非常重要的区别：
+
+- 普通任务按“过期时间”排序进入 `taskQueue`
+- 延时任务按“开始时间”排序进入 `timerQueue`
+
+也就是说，延时任务在到达 `startTime` 之前，根本不会进入可执行链路。
+
+## 普通任务和延时任务为什么要分开存放
+
+如果把所有任务都直接放进一个队列，Scheduler 就必须在每次取任务时都额外判断：
+
+- 这个任务是不是还没到开始时间
+- 它虽然优先级高，但是否暂时不能执行
+
+这会让主循环逻辑变得混乱。React 当前的设计把两类问题拆开：
+
+- `timerQueue` 只关心“什么时候可以开始”
+- `taskQueue` 只关心“已经可以开始后，谁应该优先执行”
+
+这种拆分带来两个直接好处：
+
+- 延时任务不会污染当前可执行任务排序
+- 主循环在处理 `taskQueue` 时，只面对已经具备执行资格的任务
+
+## 延时任务如何从 timerQueue 进入 taskQueue
+
+延时任务不会永远停留在 `timerQueue`。当时间推进到足够位置时，Scheduler 会通过 `advanceTimers(currentTime)` 把已经到点的任务转移到 `taskQueue`。
+
+从当前源码逻辑看，这个过程的核心规则是：
+
+- 遍历 `timerQueue` 堆顶任务
+- 如果任务 `startTime <= currentTime`
+  则把它从 `timerQueue` 弹出
+- 把它的 `sortIndex` 改为 `expirationTime`
+- 再压入 `taskQueue`
+
+这一步意味着：  
+一个延时任务一旦“到点”，它就不再按开始时间排序，而是进入正常的可执行任务竞争逻辑，之后由过期时间和优先级决定执行先后。
+
+可以用简化后的流程表示：
+
+```text
+scheduleCallback(..., { delay })
+  -> timerQueue
+  -> 时间到达 startTime
+  -> advanceTimers
+  -> 转入 taskQueue
+  -> 等待主循环执行
+```
+
+## handleTimeout 在这里扮演什么角色
+
+当队列里存在延时任务而当前没有可执行任务时，Scheduler 会请求一个宿主超时器。当前实现中，`requestHostTimeout` 基于 `setTimeout`，到达指定时间后会触发 `handleTimeout`。
+
+`handleTimeout` 的职责可以概括为：
+
+- 清除“当前已有超时器挂起”的标记
+- 调用 `advanceTimers(currentTime)`，把已到开始时间的延时任务转入 `taskQueue`
+- 如果此时 `taskQueue` 已有任务，则安排主循环开始执行
+- 如果还没有可执行任务，则继续为下一个最早的延时任务设置宿主超时器
+
+也就是说，`handleTimeout` 的作用不是直接执行任务，而是推动“延时任务 -> 可执行任务”的状态转换。
+
+## 主循环如何执行普通任务
+
+一旦 `taskQueue` 中存在任务，Scheduler 会安排宿主回调进入主循环。在当前实现中，宿主回调优先使用：
+
+- `setImmediate`
+- 否则使用 `MessageChannel`
+- 再否则回退到 `setTimeout`
+
+主循环的核心逻辑可以概括为：
+
+1. 先调用 `advanceTimers(currentTime)`，把已经到点的延时任务转入 `taskQueue`
+2. 读取 `taskQueue` 堆顶任务
+3. 如果当前任务还没过期，并且已经应该让出主线程，则暂时停止本轮执行
+4. 否则执行任务回调
+5. 如果回调返回 continuation callback，则保留该任务，等待后续继续执行
+6. 如果任务完成，则将其从 `taskQueue` 弹出
+7. 重复处理下一个任务，直到本轮应该结束
+
+这个过程体现了 Scheduler 的两个核心特征：
+
+- 它不是简单地“有任务就一次性做完”
+- 它会在恰当时机让出执行权，以维持主线程响应性
+
+## shouldYieldToHost 与时间切片
+
+在当前实现中，`shouldYieldToHost()` 会依据本轮开始时间与帧间隔判断是否应该先让出主线程。默认帧间隔为 `5ms`。这意味着 Scheduler 倾向于在一个较短时间片内执行部分工作，然后把控制权暂时还给宿主环境。
+
+这并不意味着任务一定每 `5ms` 精准切一次，而是说明 Scheduler 在设计上遵循协作式调度原则：
+
+- 任务不是抢占式强制中断
+- React 在执行过程中主动检查“现在是否应该先停一下”
+
+因此，普通任务与延时任务虽然进入执行链路的方式不同，但最终都要接受同一套“是否继续执行、是否应该让出主线程”的判断逻辑。
+
+## continuation callback 的意义
+
+Scheduler 中还有一个很容易被忽略的点：任务回调可以返回一个新的函数，作为 continuation callback。当前实现会把它重新挂回当前任务上，表示“这项工作还没彻底做完，后续可以继续”。
+
+这使调度器具备了更强的分段执行能力：
+
+- 当前时间片内先做一部分
+- 如果还没完成，就返回 continuation
+- 下一轮继续接着做
+
+这正是 React 可以把较大工作拆成多个片段处理的重要基础之一。
+
+## Scheduler 与 React 18 / React 19 的关系
+
+从应用开发的视角看，React 18 是现代调度心智模型正式成为主线的版本。并发渲染、自动 batching、transition、Suspense 等能力之所以能形成统一工作流，本质上都离不开调度层与 Fiber 的配合。
+
+React 19 并没有把 Scheduler 换成另一套新体系。更准确的表述是：
+
+- React 18 奠定现代调度与渲染协作模型
+- React 19 在其基础上继续增强数据读取、Suspense、hydration 与开发体验
+
+因此，理解 Scheduler 时，应把它放在 React 18 之后的连续模型中，而不是把 React 19 理解为新的调度时代。
+
+## 常见误区
+
+### Scheduler 不等于浏览器事件循环本身
+
+Scheduler 运行在浏览器环境之上，会借助 `MessageChannel`、`setTimeout` 等宿主能力，但它本身是 React 所依赖的应用层调度器，不是浏览器原生事件循环的替代品。
+
+### 普通任务不等于立即同步完成
+
+普通任务只是“可以立刻进入可执行队列”，并不代表它必须不间断地同步做完。是否连续执行，还要看优先级、是否过期以及 `shouldYieldToHost` 的结果。
+
+### 延时任务不是到时间就立刻完成
+
+延时任务到达 `startTime` 后，只是被转入 `taskQueue`，具备参与执行竞争的资格。它依然要接受优先级、过期时间和主线程让出逻辑的控制。
+
+### Scheduler 不是业务代码的主流 API
+
+`scheduler` 包的 README 已明确说明其公共 API 尚未最终稳定。对绝大多数 React 应用而言，更常见的入口仍然是 `startTransition`、`useTransition` 等 React 层 API，而不是直接依赖 `unstable_scheduleCallback`。
+
+## 工程视角下的理解方式
+
+如果把这套机制压缩成工程上最重要的判断，可以概括为：
+
+- 普通任务：立即进入可执行队列
+- 延时任务：先进入等待队列，到点后再转入可执行队列
+- 可执行后也不代表会一口气做完，还要接受时间切片和让出判断
+- 优先级决定紧迫程度，`delay` 决定最早开始时间
+- `expirationTime` 决定任务不能再被无限拖延
+
+这也是 React 能同时处理响应性、吞吐量与复杂更新链路的关键原因。
+
+## 文末速查
+
+| 概念                | 一句话定义                                                    |
+| ------------------- | ------------------------------------------------------------- |
+| `taskQueue`         | 存放已经可以开始执行的任务，按 `expirationTime` 排序          |
+| `timerQueue`        | 存放尚未到开始时间的延时任务，按 `startTime` 排序             |
+| 普通任务            | 无正数 `delay`，直接进入 `taskQueue`                          |
+| 延时任务            | 有正数 `delay`，先进入 `timerQueue`，到点后再转入 `taskQueue` |
+| `advanceTimers`     | 把已到开始时间的延时任务迁移到可执行队列                      |
+| `handleTimeout`     | 在宿主超时器触发后推进延时任务状态转换                        |
+| `shouldYieldToHost` | 判断当前是否应该先让出主线程                                  |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Scheduler 对普通任务和延时任务的核心区分，不在于优先级名字，而在于任务是“现在即可执行”，还是“必须先等到开始时间再进入执行竞争”。

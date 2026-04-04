@@ -1,0 +1,273 @@
+---
+title: 核心语法
+category: ts
+excerpt: 从基础类型、联合类型、字面量类型到接口、类型别名、函数类型与类型断言，系统梳理 TypeScript 最核心的语言语法与使用边界。
+slug: typescript-core-syntax-collection
+tags: [TypeScript, Types, Interface, Union, Type Alias]
+---
+
+{/* @format */}
+
+# TypeScript 核心语法合集
+
+真正让 TypeScript 形成价值的，并不是“比 JavaScript 多写了几个类型标注”，而是它把一套可组合的类型系统引入了日常开发。要进入这套体系，第一步不是直接学高级泛型，而是先把最常用、最核心的语法层打牢。
+
+这篇文章不追求把所有语法都铺成字典，而是围绕业务开发中最常见的一组核心能力展开：基础类型、联合类型、字面量类型、类型别名、接口、函数类型和类型断言。目标只有一个：建立最基础的 TypeScript 语言使用面，让后续泛型、条件类型、工具类型都能有稳定落点。
+
+官方文档主线参考：
+
+- [The Basics](https://www.typescriptlang.org/docs/handbook/2/basic-types.html)
+- [More on Functions](https://www.typescriptlang.org/docs/handbook/2/functions.html)
+- [Everyday Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html)
+
+## 先建立一个基本认知
+
+TypeScript 的类型写法，不是为了“让编辑器更好看”，而是为了回答三个问题：
+
+- 这个值可能是什么形状
+- 这个函数能接收什么输入、返回什么输出
+- 某个变量在不同分支下还能不能安全使用
+
+你可以把核心语法理解成三层：
+
+- 值的形状：基础类型、字面量类型、联合类型
+- 结构的抽象：接口、类型别名
+- 行为的约束：函数类型、类型断言
+
+## 基础类型
+
+一句话定义：基础类型是 TypeScript 对最常见值形态的直接建模，例如 `string`、`number`、`boolean`、`null`、`undefined`、`symbol`、`bigint`。
+
+它解决什么问题：让变量和函数输入输出不再停留在“任何值都行”的状态，而是先建立最基本的类型边界。
+
+什么时候用：
+
+- 所有局部变量和函数参数的基础约束
+- 组件 props、API 返回值、表单字段等类型建模的最小单位
+
+```ts
+const title: string = 'TypeScript'
+const page: number = 1
+const loading: boolean = false
+```
+
+常见注意点：基础类型看起来简单，但真正决定安全边界的是它们和 `null` / `undefined` 的组合方式，尤其在 `strictNullChecks` 开启后更明显。来源：[Basic Types](https://www.typescriptlang.org/docs/handbook/2/basic-types.html)
+
+## 联合类型
+
+一句话定义：联合类型允许一个值在多个候选类型中取其一。
+
+它解决什么问题：真实业务里，一个值往往不是只有单一类型。例如接口状态可能是 `'idle' | 'loading' | 'success' | 'error'`，参数也可能是字符串或数字。
+
+什么时候用：
+
+- 状态建模
+- 参数可接收多种输入形式
+- 对同一字段建立有限候选范围
+
+```ts
+let status: 'idle' | 'loading' | 'success' | 'error' = 'idle'
+
+function formatId(id: string | number) {
+  return String(id)
+}
+```
+
+常见注意点：联合类型不是“多个类型随便拼在一起”，而是告诉编译器：当前值可能是这些候选之一，因此在使用前必须先缩小范围。来源：[Everyday Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html)
+
+## 字面量类型
+
+一句话定义：字面量类型把具体值本身当成类型，例如 `'success'`、`404`、`true`。
+
+它解决什么问题：有些字段不是任何字符串或数字都允许，而是只允许极少数合法值。
+
+什么时候用：
+
+- 请求状态
+- 组件尺寸、主题、方向枚举
+- 配置项约束
+
+```ts
+type Size = 'sm' | 'md' | 'lg'
+type HttpMethod = 'GET' | 'POST'
+```
+
+常见注意点：字面量类型通常和联合类型一起使用，单独出现时价值有限；真正有用的是把“可选值集合”限制在有限范围内。来源：[Literal Types](https://www.typescriptlang.org/docs/handbook/literal-types.html)
+
+## 类型别名
+
+一句话定义：`type` 用来为一个类型表达式起名字。
+
+它解决什么问题：当某段类型写法开始重复出现，或者某个复杂结构需要一个明确语义名称时，类型别名能把类型从“写法”提升成“概念”。
+
+什么时候用：
+
+- 联合类型命名
+- 对象结构命名
+- 工具类型组合后的中间结果命名
+
+```ts
+type RequestStatus = 'idle' | 'loading' | 'success' | 'error'
+
+type User = {
+  id: string
+  name: string
+  active: boolean
+}
+```
+
+常见注意点：类型别名不是“轻量版接口”，它更适合表达联合、交叉、工具类型组合等接口不擅长的场景。来源：[Everyday Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html)
+
+## 接口
+
+一句话定义：`interface` 用来描述对象、函数或类实例的结构契约。
+
+它解决什么问题：在对象为核心的数据建模中，接口能让结构含义更清晰，并支持扩展与合并等机制。
+
+什么时候用：
+
+- API 数据结构
+- 组件 props 对象
+- 配置对象
+- 面向对象风格的结构契约
+
+```ts
+interface User {
+  id: string
+  name: string
+  email?: string
+}
+
+function printUser(user: User) {
+  console.log(user.name)
+}
+```
+
+常见注意点：在业务项目里，`interface` 和对象型 `type` 都能完成很多相同工作。更重要的不是二选一宗教争论，而是保持团队一致，并理解它们各自的适用边界。来源：[Object Types](https://www.typescriptlang.org/docs/handbook/2/objects.html)
+
+## 类型别名和接口怎么选
+
+这是 TypeScript 初学阶段最常见的问题之一。一个稳定的判断方式是：
+
+- 需要表达联合、交叉、映射、条件组合：优先 `type`
+- 主要表达对象结构契约：`interface` 或对象型 `type` 都可以
+- 需要依赖接口扩展语义：优先 `interface`
+
+如果项目没有特别强的历史约束，建议以“对象结构常用 `interface`，复杂类型表达常用 `type`”为主线，保持一致即可。
+
+## 函数类型
+
+一句话定义：函数类型用来约束函数能接收什么参数、返回什么结果。
+
+它解决什么问题：函数如果没有输入输出边界，就很难形成稳定 API；而 TypeScript 的函数类型让调用关系变得可检查、可推导、可重构。
+
+什么时候用：
+
+- 普通工具函数
+- 组件回调参数
+- 高阶函数、事件处理器、异步函数接口
+
+```ts
+function sum(a: number, b: number): number {
+  return a + b
+}
+
+type SubmitHandler = (value: string) => Promise<void>
+```
+
+常见注意点：参数类型、可选参数、默认参数和返回值一起构成函数契约。不要只写参数类型而忽略返回值设计，尤其在公共函数和库接口里。来源：[More on Functions](https://www.typescriptlang.org/docs/handbook/2/functions.html)
+
+## 数组、元组与对象结构
+
+一句话定义：TypeScript 不只关心单个值，还能约束一组值的排列方式和对象的字段结构。
+
+它解决什么问题：业务代码里很大一部分数据都不是单值，而是数组、对象和固定结构的数据组合。
+
+什么时候用：
+
+- 列表数据
+- 固定返回值结构
+- 多值返回
+
+```ts
+const ids: string[] = ['1', '2', '3']
+
+type Point = [number, number]
+
+const point: Point = [10, 20]
+```
+
+常见注意点：元组不是“任意数组”。它的价值在于固定长度、固定顺序和固定每一位的类型。来源：[Tuples](https://www.typescriptlang.org/docs/handbook/2/objects.html#tuple-types)
+
+## any、unknown 与不要过早放弃类型系统
+
+一句话定义：`any` 会绕过几乎所有类型检查，`unknown` 则要求你在真正使用前做类型收窄。
+
+它解决什么问题：在类型暂时未知、外部输入不可信或迁移旧代码时，需要一个过渡类型。
+
+什么时候用：
+
+- 外部数据源刚进入系统时
+- 渐进迁移 JavaScript 项目
+- 某些无法立即精确建模的边界层
+
+```ts
+function parseValue(value: unknown) {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  return ''
+}
+```
+
+常见注意点：官方文档明确指出，应尽量避免无边界地使用 `any`。如果只是“现在还不知道是什么”，优先考虑 `unknown`，因为它会逼你在真正使用前先做判断。来源：[Basic Types](https://www.typescriptlang.org/docs/handbook/2/basic-types.html)
+
+## 类型断言
+
+一句话定义：类型断言是开发者告诉编译器“我比你更清楚这里的类型”的一种写法。
+
+它解决什么问题：有些场景下编译器无法自动推断出足够精确的类型，开发者需要手动补充信息。
+
+什么时候用：
+
+- DOM 获取结果
+- 某些第三方库返回类型不够精确
+- JSON 解析后进入已知结构
+
+```ts
+const input = document.querySelector('#search') as HTMLInputElement | null
+
+if (input) {
+  input.focus()
+}
+```
+
+常见注意点：类型断言不会改变运行时值，也不会做真实校验。它只是关闭了一部分编译器怀疑，因此只能在你确实有更强确定性时使用，不能当成修错误的通用按钮。来源：[Type Assertions](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#type-assertions)
+
+## 核心语法的工程判断
+
+把这一批能力放到真实项目里，可以形成一个稳定判断顺序：
+
+- 先用基础类型、联合和字面量类型约束值范围
+- 再用接口或类型别名表达结构
+- 再用函数类型定义输入输出
+- 只有当编译器确实无法推断时才使用断言
+- 对未知输入优先用 `unknown`，不要默认退回 `any`
+
+这套顺序看似基础，但它决定了后续泛型、工具类型和工程实践能否真正稳定。
+
+## 文末速查
+
+| 问题                         | 优先想到的能力        |
+| ---------------------------- | --------------------- |
+| 限制一个值只能是有限几个选项 | 联合类型 + 字面量类型 |
+| 给复杂类型起名字             | `type`                |
+| 表达对象结构契约             | `interface`           |
+| 限制函数输入输出             | 函数类型              |
+| 暂时未知的安全输入           | `unknown`             |
+| 告诉编译器更精确的已知类型   | 类型断言              |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> TypeScript 的核心语法不是在给代码“加注释”，而是在给值、结构和函数建立可验证的边界。

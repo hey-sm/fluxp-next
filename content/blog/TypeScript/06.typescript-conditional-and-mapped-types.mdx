@@ -1,0 +1,314 @@
+---
+title: 条件类型与映射类型
+category: ts
+excerpt: 从条件类型、分布式条件类型到映射类型、键重映射与组合模式，系统讲清 TypeScript 如何把类型从静态描述推进到可计算结构。
+slug: typescript-conditional-and-mapped-types
+tags: [TypeScript, Conditional Types, Mapped Types, Key Remapping]
+---
+
+{/* @format */}
+
+# TypeScript 条件类型与映射类型体系
+
+基础类型、泛型和类型推导解决的是“如何描述已有结构”，而条件类型与映射类型解决的是另一个层面的问题：当类型本身需要参与计算时，应该如何表达。它们让 TypeScript 不再只是给值加注解，而是开始具备“根据已有类型生成新类型”的能力。
+
+这一层能力是现代 TypeScript 工程化的分水岭。很多常见工具类型、组件库类型定义、API 映射关系和配置类型约束，本质上都建立在条件类型与映射类型之上。
+
+官方文档主线参考：
+
+- [Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)
+- [Mapped Types](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html)
+
+## 先建立一个整体视角
+
+可以把这篇文章讨论的能力分成两类：
+
+- 条件类型：根据某个类型是否满足条件，返回不同结果
+- 映射类型：遍历一个类型的键，再批量生成新结构
+
+前者擅长“判断”，后者擅长“批量转换”。两者组合之后，TypeScript 的类型系统才真正具备了较强的可计算性。
+
+## 条件类型
+
+一句话定义：条件类型使用 `T extends U ? X : Y` 的形式，根据类型关系返回不同结果。
+
+它解决什么问题：有些类型不是固定写死的，而是取决于另一个输入类型的形态。例如“如果传入的是数组，就取数组元素类型；否则保留原类型”。
+
+什么时候用：
+
+- 根据输入类型派生输出类型
+- 写工具类型
+- 为泛型 API 建立更细致的返回值逻辑
+
+```ts
+type ValueLabel<T> = T extends string ? 'text' : 'other'
+
+type A = ValueLabel<string>
+type B = ValueLabel<number>
+```
+
+这里：
+
+- `A` 会得到 `'text'`
+- `B` 会得到 `'other'`
+
+常见注意点：条件类型的判断不是运行时判断，而是类型层面的可赋值关系判断。也就是说，这里比较的不是值，而是类型之间是否满足 `extends` 关系。来源：[Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)
+
+## 条件类型到底在判断什么
+
+初学阶段最容易误解的一点是：`extends` 在条件类型里不是“继承”，而更接近“是否可赋值给”。
+
+例如：
+
+```ts
+type IsString<T> = T extends string ? true : false
+```
+
+这段代码真正表达的是：
+
+- 如果 `T` 能赋值给 `string`，则结果是 `true`
+- 否则结果是 `false`
+
+所以条件类型的本质不是面向对象语义，而是类型关系判断语义。
+
+## infer
+
+一句话定义：`infer` 用于在条件类型内部声明一个待推导的类型变量，从某个更大结构中提取子类型。
+
+它解决什么问题：有些类型信息并不直接暴露在外部，而是包在函数、Promise、数组、对象等结构内部。`infer` 让你可以在匹配成功时把内部类型“抽出来”。
+
+什么时候用：
+
+- 提取函数返回值
+- 提取 Promise 内部值
+- 提取数组元素类型
+- 定义通用工具类型
+
+```ts
+type ElementType<T> = T extends Array<infer U> ? U : T
+
+type NameList = string[]
+type NameItem = ElementType<NameList>
+```
+
+这里 `NameItem` 会得到 `string`。
+
+常见注意点：`infer` 只能出现在条件类型的 `extends` 分支匹配位置，它不是一个任意位置都可声明的泛型变量。来源：[Inferring Within Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)
+
+## 分布式条件类型
+
+一句话定义：当条件类型作用于裸类型参数，并且这个参数是联合类型时，TypeScript 会把条件判断自动分发到联合的每个成员上。
+
+它解决什么问题：很多工具类型之所以强大，正是因为它们可以自动逐个处理联合成员，而不是把整个联合当成一个整体。
+
+```ts
+type ToArray<T> = T extends any ? T[] : never
+
+type Result = ToArray<string | number>
+```
+
+这里的 `Result` 不是 `(string | number)[]`，而是：
+
+```ts
+type Result = string[] | number[]
+```
+
+这就是分布式条件类型。
+
+常见注意点：只有“裸类型参数”才会触发这种分发行为。如果你不希望分发，可以用方括号把类型包起来：
+
+```ts
+type ToArrayNonDist<T> = [T] extends [any] ? T[] : never
+```
+
+来源：[Distributive Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)
+
+## 映射类型
+
+一句话定义：映射类型会遍历某个对象类型的所有键，并对每个键生成新的属性定义。
+
+它解决什么问题：现实项目里，经常需要“保留结构，但批量修改每个属性的可选性、只读性或值类型”。如果手写每个字段，既重复又脆弱。
+
+什么时候用：
+
+- 批量把属性变可选
+- 批量把属性变只读
+- 从一个模型派生编辑态、只读态、提交态等多个视图
+
+```ts
+type User = {
+  id: string
+  name: string
+  active: boolean
+}
+
+type EditableUser = {
+  [K in keyof User]: User[K]
+}
+```
+
+这个例子只是最基础形态。真正的价值在于配合修饰符和条件逻辑做批量变换。来源：[Mapped Types](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html)
+
+## keyof 是映射类型的入口
+
+映射类型之所以成立，关键在于 `keyof` 能先得到一个对象类型的所有键。
+
+```ts
+type User = {
+  id: string
+  name: string
+}
+
+type UserKeys = keyof User
+```
+
+这里 `UserKeys` 会是 `'id' | 'name'`。随后映射类型就能沿着这个键集合逐项生成新类型。
+
+从工程视角看，`keyof` 把“对象结构”转成“键集合”，而映射类型再把“键集合”重新装配成“新对象结构”。
+
+## 映射修饰符
+
+一句话定义：映射类型可以批量添加或移除 `readonly` 和 `?` 这类属性修饰符。
+
+它解决什么问题：很多类型变体并不是值类型变化，而是属性可选性或可变性变化，例如编辑态、初始化态、完整数据态。
+
+```ts
+type PartialUser = {
+  [K in keyof User]?: User[K]
+}
+
+type ReadonlyUser = {
+  readonly [K in keyof User]: User[K]
+}
+```
+
+TypeScript 还支持移除修饰符：
+
+```ts
+type Concrete<T> = {
+  [K in keyof T]-?: T[K]
+}
+```
+
+常见注意点：映射修饰符的价值不在语法本身，而在于你可以用同一个原始模型派生出多个不同生命周期的结构。来源：[Mapping Modifiers](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html)
+
+## 键重映射
+
+一句话定义：键重映射允许你在映射类型中通过 `as` 改写属性名，甚至过滤掉某些键。
+
+它解决什么问题：很多时候你不只是想“保留原结构”，而是想根据原结构生成一套新的 API，例如事件处理器名、表单 setter 名、字段映射表等。
+
+什么时候用：
+
+- 批量生成 `onXxxChange`
+- 过滤私有字段
+- 统一修改键命名风格
+
+```ts
+type FormState = {
+  keyword: string
+  page: number
+}
+
+type SetterMap = {
+  [K in keyof FormState as `set${Capitalize<string & K>}`]: (value: FormState[K]) => void
+}
+```
+
+这里会得到：
+
+- `setKeyword(value: string): void`
+- `setPage(value: number): void`
+
+常见注意点：键重映射很强，但不应该为了展示技巧而滥用。只有当它能显著减少重复、提升一致性时，才值得进入业务代码。来源：[Key Remapping via as](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html)
+
+## 条件类型与映射类型的组合
+
+真正有工程价值的往往不是单独使用，而是组合使用。例如只挑出某类字段：
+
+```ts
+type FilterStringProps<T> = {
+  [K in keyof T as T[K] extends string ? K : never]: T[K]
+}
+
+type Product = {
+  id: string
+  price: number
+  title: string
+  stock: number
+}
+
+type ProductTextFields = FilterStringProps<Product>
+```
+
+这里最终得到：
+
+```ts
+type ProductTextFields = {
+  id: string
+  title: string
+}
+```
+
+这类组合模式在表单建模、配置提取、DTO 派生、组件 prop 过滤中非常常见。
+
+## 工程里最常见的几种用途
+
+### 从后端模型派生前端编辑模型
+
+后端返回的数据可能是完整只读结构，而前端表单编辑只需要其中一部分字段，还可能全部可选。此时映射类型和工具类型可以帮助你从原始模型派生视图结构，而不是再手写一份近似类型。
+
+### 从函数签名提取类型信息
+
+工具函数、请求函数、store action 常常希望自动得到返回值或参数类型。底层原理通常就是条件类型加 `infer`。
+
+### 根据字段类型生成 UI 行为类型
+
+例如只提取字符串字段作为搜索项，只提取布尔字段作为开关配置。这类能力靠手写结构很难维护，靠条件映射就会稳定很多。
+
+## 常见误区
+
+### 误区一：条件类型就是高级 if 语句
+
+不准确。它判断的是类型关系，而不是运行时值。
+
+### 误区二：分布式条件类型越多越好
+
+分发很强，但也更容易让类型结果变复杂。只有在你确实需要逐个处理联合成员时才应该依赖它。
+
+### 误区三：映射类型只是 `Partial` 的底层语法
+
+`Partial` 只是映射类型的一种应用。映射类型真正的价值在于它是“批量重构对象结构”的底层能力。
+
+### 误区四：高级类型越复杂越专业
+
+在工程里，类型的可读性和维护性同样重要。能用简单结构表达清楚的问题，不应该强行升级成复杂条件映射体操。
+
+## 设计高级类型时的判断顺序
+
+如果你在项目中准备引入条件类型和映射类型，可以先按下面顺序判断：
+
+- 先确认是不是确实存在“从已有类型派生新类型”的需求
+- 能用普通对象类型和基础泛型解决的，不要过早升级
+- 需要按类型关系分支时，用条件类型
+- 需要批量遍历属性时，用映射类型
+- 需要从结构里提取内部类型时，用 `infer`
+- 需要筛选或改名属性时，再考虑键重映射
+
+这比单纯记忆语法更重要，因为高级类型的难点从来不在写法，而在设计边界。
+
+## 文末速查
+
+| 问题                                | 优先想到的能力      |
+| ----------------------------------- | ------------------- |
+| 根据输入类型决定输出类型            | 条件类型            |
+| 从数组、Promise、函数中提取内部类型 | `infer`             |
+| 逐个处理联合类型成员                | 分布式条件类型      |
+| 批量修改对象属性结构                | 映射类型            |
+| 批量改可选或只读修饰符              | 映射修饰符          |
+| 根据原键生成新键名                  | 键重映射            |
+| 按字段类型筛选属性                  | 条件类型 + 键重映射 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> 条件类型负责让类型“会判断”，映射类型负责让类型“会批量变形”，二者结合之后，TypeScript 才真正进入可计算类型系统阶段。

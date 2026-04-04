@@ -9,13 +9,13 @@ export default function BlogPage() {
 
   return (
     <BlogContentLayout>
-      <main className="mx-auto w-full max-w-3xl">
+      <main className="w-full">
         <section className="border-border bg-card rounded-[2rem] border px-6 py-10 shadow-sm md:px-10">
           <p className="text-muted-foreground text-sm font-medium tracking-[0.18em] uppercase">
             fluxp docs
           </p>
           <h1 className="mt-4 text-4xl font-semibold tracking-tight">只保留阅读最需要的东西</h1>
-          <p className="text-muted-foreground mt-4 max-w-2xl text-base leading-7">
+          <p className="text-muted-foreground mt-4 text-base leading-7">
             左边是文档导航，右边是当前页面目录，中间只负责内容本身。这里会持续整理 Vue、React
             和日常学习记录。
           </p>

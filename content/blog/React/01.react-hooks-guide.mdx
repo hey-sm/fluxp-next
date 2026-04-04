@@ -1,0 +1,567 @@
+---
+title: Hooks
+category: react
+excerpt: 面向业务开发梳理 React 18 与 React 19 最常用 Hooks 的用法、场景、示例与注意事项。
+slug: react-hooks-guide
+tags: [React 18, React 19, Hooks, useActionState, useOptimistic]
+---
+
+{/* @format */}
+
+# React 18 与 React 19 常用 Hooks 指南
+
+这篇文章不追求把所有内置 Hook 都讲成百科全书，而是聚焦 React 18 与 React 19 里业务开发最常用、最值得优先掌握的那一批能力。每个 Hook 都按统一结构来讲：它解决什么问题、什么时候用、一个最小示例，以及一个常见注意点。
+
+如果你在做的是普通的前端页面、后台系统、表单流转或数据交互，这篇内容基本已经覆盖了 80% 以上的高频场景。
+
+## 先建立一个整体认识
+
+React Hook 大致可以分成几类：
+
+- 状态类：`useState`、`useReducer`
+- 副作用类：`useEffect`、`useLayoutEffect`、`useEffectEvent`
+- 引用与上下文类：`useRef`、`useContext`
+- 性能与并发类：`useMemo`、`useCallback`、`useTransition`、`useDeferredValue`
+- 表单与交互类：`useActionState`、`useFormStatus`、`useOptimistic`
+- 标识与可访问性类：`useId`
+
+接下来按 React 18 和 React 19 两大章节来整理。
+
+## React 18 常用 Hooks
+
+React 18 阶段最重要的关键词是状态管理、副作用处理、上下文共享，以及并发渲染能力。下面这些 Hook 基本构成了日常开发的核心工具箱。
+
+### useState
+
+一句话定义：在函数组件里保存一个会触发重新渲染的本地状态。
+
+适用场景：表单输入、弹窗开关、计数器、分页索引、请求结果等轻量状态。
+
+```jsx
+import { useState } from 'react'
+
+export default function Counter() {
+  const [count, setCount] = useState(0)
+
+  return <button onClick={() => setCount((value) => value + 1)}>点击了 {count} 次</button>
+}
+```
+
+注意点：当新状态依赖旧状态时，优先使用函数式更新 `setState(prev => next)`，这样可以避免闭包里拿到旧值。
+
+### useEffect
+
+一句话定义：在组件渲染提交到页面之后，同步外部系统。
+
+适用场景：发请求、订阅事件、操作浏览器 API、同步标题、建立和清理连接。
+
+```jsx
+import { useEffect, useState } from 'react'
+
+export default function UserProfile({ userId }) {
+  const [user, setUser] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadUser() {
+      const response = await fetch(`/api/users/${userId}`)
+      const data = await response.json()
+
+      if (!cancelled) {
+        setUser(data)
+      }
+    }
+
+    loadUser()
+
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  return <div>{user ? user.name : '加载中...'}</div>
+}
+```
+
+注意点：`useEffect` 不是“所有逻辑的默认放置点”。如果逻辑只和渲染计算有关，应该直接放在渲染阶段，而不是硬塞进 Effect。
+
+### useContext
+
+一句话定义：读取最近一层 Context Provider 提供的共享值。
+
+适用场景：主题、登录态、语言、权限、全局配置等跨层级共享数据。
+
+```jsx
+import { createContext, useContext } from 'react'
+
+const ThemeContext = createContext('light')
+
+function ToolbarButton() {
+  const theme = useContext(ThemeContext)
+  return <button className={theme}>提交</button>
+}
+
+export default function Page() {
+  return (
+    <ThemeContext.Provider value="dark">
+      <ToolbarButton />
+    </ThemeContext.Provider>
+  )
+}
+```
+
+注意点：Context 很适合传“共享配置”，但不适合把频繁变化、粒度很细的大量状态全塞进去，否则容易带来不必要的重渲染。
+
+### useRef
+
+一句话定义：保存一个在多次渲染之间稳定存在、修改后不会触发重渲染的引用值。
+
+适用场景：访问 DOM、保存定时器 ID、缓存上一次值、存放实例对象。
+
+```jsx
+import { useEffect, useRef } from 'react'
+
+export default function SearchInput() {
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  return <input ref={inputRef} placeholder="请输入关键词" />
+}
+```
+
+注意点：`ref.current` 的变化不会触发视图更新，所以不要把需要展示在界面上的数据放进 ref 里代替 state。
+
+### useMemo
+
+一句话定义：缓存一次计算结果，只有依赖变化时才重新计算。
+
+适用场景：昂贵计算、列表过滤、派生数据、为子组件提供稳定计算结果。
+
+```jsx
+import { useMemo, useState } from 'react'
+
+export default function ProductList({ products }) {
+  const [keyword, setKeyword] = useState('')
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((item) => item.name.includes(keyword))
+  }, [products, keyword])
+
+  return (
+    <>
+      <input value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+      <ul>
+        {filteredProducts.map((item) => (
+          <li key={item.id}>{item.name}</li>
+        ))}
+      </ul>
+    </>
+  )
+}
+```
+
+注意点：`useMemo` 是性能优化工具，不是语义工具。不要为了“看起来高级”而给每个变量都包一层 `useMemo`。
+
+### useCallback
+
+一句话定义：缓存一个函数引用，只有依赖变化时才生成新的函数。
+
+适用场景：把事件处理函数传给被 `memo` 包裹的子组件，或者作为其他 Hook 的依赖时保持稳定。
+
+```jsx
+import { useCallback, useState } from 'react'
+
+function SearchBox({ onSearch }) {
+  return <button onClick={() => onSearch('react')}>搜索 React</button>
+}
+
+export default function Page() {
+  const [history, setHistory] = useState([])
+
+  const handleSearch = useCallback((keyword) => {
+    setHistory((list) => [...list, keyword])
+  }, [])
+
+  return <SearchBox onSearch={handleSearch} />
+}
+```
+
+注意点：`useCallback(fn, deps)` 本质上只是缓存函数引用，不会帮你自动优化函数内部逻辑。没有实际重渲染问题时，可以先不加。
+
+### useReducer
+
+一句话定义：用 reducer 统一管理多个相关状态和状态变更逻辑。
+
+适用场景：表单状态复杂、状态切换较多、多个字段一起更新、需要明确 action 类型。
+
+```jsx
+import { useReducer } from 'react'
+
+const initialState = {
+  status: 'idle',
+  count: 0,
+}
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'increment':
+      return { ...state, count: state.count + 1 }
+    case 'loading':
+      return { ...state, status: 'loading' }
+    default:
+      return state
+  }
+}
+
+export default function Counter() {
+  const [state, dispatch] = useReducer(reducer, initialState)
+
+  return (
+    <>
+      <p>
+        {state.status} / {state.count}
+      </p>
+      <button onClick={() => dispatch({ type: 'increment' })}>+1</button>
+    </>
+  )
+}
+```
+
+注意点：当状态只是一个简单布尔值或字符串时，先用 `useState`。只有当状态逻辑开始变复杂时，再升级到 `useReducer` 会更自然。
+
+### useLayoutEffect
+
+一句话定义：在浏览器绘制之前同步执行副作用。
+
+适用场景：测量 DOM 尺寸、同步滚动位置、避免首帧闪动。
+
+```jsx
+import { useLayoutEffect, useRef, useState } from 'react'
+
+export default function MeasureBox() {
+  const boxRef = useRef(null)
+  const [height, setHeight] = useState(0)
+
+  useLayoutEffect(() => {
+    setHeight(boxRef.current?.getBoundingClientRect().height ?? 0)
+  }, [])
+
+  return (
+    <div>
+      <div ref={boxRef}>这是一个需要测量高度的区域</div>
+      <p>高度：{height}px</p>
+    </div>
+  )
+}
+```
+
+注意点：能用 `useEffect` 就先用 `useEffect`。`useLayoutEffect` 会阻塞浏览器绘制，滥用会影响性能。
+
+### useId
+
+一句话定义：生成一个稳定且适合服务端与客户端一致匹配的唯一 ID。
+
+适用场景：表单标签和输入框关联、无障碍属性绑定、组件内部唯一标识。
+
+```jsx
+import { useId } from 'react'
+
+export default function EmailField() {
+  const id = useId()
+
+  return (
+    <>
+      <label htmlFor={id}>邮箱</label>
+      <input id={id} type="email" />
+    </>
+  )
+}
+```
+
+注意点：`useId` 用于生成可访问性和结构关联用的 ID，不适合拿来做列表的 `key`。
+
+### useTransition
+
+一句话定义：把某些更新标记为“可以延后处理的非紧急更新”。
+
+适用场景：输入时触发大列表刷新、切换面板、筛选结果更新、避免界面卡顿。
+
+```jsx
+import { useState, useTransition } from 'react'
+
+export default function SearchPage({ items }) {
+  const [keyword, setKeyword] = useState('')
+  const [result, setResult] = useState(items)
+  const [isPending, startTransition] = useTransition()
+
+  function handleChange(event) {
+    const nextKeyword = event.target.value
+    setKeyword(nextKeyword)
+
+    startTransition(() => {
+      setResult(items.filter((item) => item.name.includes(nextKeyword)))
+    })
+  }
+
+  return (
+    <>
+      <input value={keyword} onChange={handleChange} />
+      {isPending && <p>正在更新结果...</p>}
+      <ul>
+        {result.map((item) => (
+          <li key={item.id}>{item.name}</li>
+        ))}
+      </ul>
+    </>
+  )
+}
+```
+
+注意点：`useTransition` 不能替代真实的异步加载状态，它解决的是“更新优先级”问题，不是“请求是否完成”问题。
+
+### useDeferredValue
+
+一句话定义：让某个值延后一点再参与渲染，从而减少高频输入导致的卡顿。
+
+适用场景：搜索联想、大列表过滤、复杂图表、输入实时驱动的大计算界面。
+
+```jsx
+import { useDeferredValue, useMemo, useState } from 'react'
+
+export default function SearchList({ items }) {
+  const [keyword, setKeyword] = useState('')
+  const deferredKeyword = useDeferredValue(keyword)
+
+  const result = useMemo(() => {
+    return items.filter((item) => item.name.includes(deferredKeyword))
+  }, [items, deferredKeyword])
+
+  return (
+    <>
+      <input value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+      <ul>
+        {result.map((item) => (
+          <li key={item.id}>{item.name}</li>
+        ))}
+      </ul>
+    </>
+  )
+}
+```
+
+注意点：`useDeferredValue` 延迟的是“值参与渲染”的节奏，不会自动减少网络请求次数。需要防抖时，还是要自己做防抖。
+
+## React 19 常用 Hooks
+
+React 19 的重点不只是“多了几个新 Hook”，而是把表单 action、乐观更新和 Effect 事件拆分这些高频能力进一步做顺了。对于现代表单流和交互式应用来说，这一组 API 很实用。
+
+### useActionState
+
+一句话定义：把表单 action 的执行结果和提交状态收敛到一个 Hook 里管理。
+
+适用场景：登录、注册、创建记录、提交表单后返回错误信息或成功消息。
+
+```jsx
+import { useActionState } from 'react'
+
+async function submitMessage(previousState, formData) {
+  const message = formData.get('message')
+
+  if (!message) {
+    return { error: '内容不能为空', success: '' }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+
+  return { error: '', success: `已提交：${message}` }
+}
+
+export default function MessageForm() {
+  const [state, formAction, isPending] = useActionState(submitMessage, {
+    error: '',
+    success: '',
+  })
+
+  return (
+    <form action={formAction}>
+      <input name="message" placeholder="输入内容" />
+      <button disabled={isPending}>{isPending ? '提交中...' : '提交'}</button>
+      {state.error && <p>{state.error}</p>}
+      {state.success && <p>{state.success}</p>}
+    </form>
+  )
+}
+```
+
+注意点：`useActionState` 很适合“表单提交后要回填状态”的场景，但它不是通用状态库。普通局部状态依旧优先用 `useState`。
+
+### useOptimistic
+
+一句话定义：在真实异步结果返回前，先给界面一个“乐观”的即时反馈。
+
+适用场景：发送评论、点赞、收藏、追加消息、更新待办项等希望界面先动起来的交互。
+
+```jsx
+import { useOptimistic, useState } from 'react'
+
+export default function CommentList() {
+  const [comments, setComments] = useState([{ id: 1, text: '第一条评论' }])
+  const [optimisticComments, addOptimisticComment] = useOptimistic(
+    comments,
+    (state, newComment) => [...state, newComment],
+  )
+
+  async function handleSubmit(formData) {
+    const text = formData.get('text')
+    const optimisticItem = { id: Date.now(), text }
+
+    addOptimisticComment(optimisticItem)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    setComments((list) => [...list, optimisticItem])
+  }
+
+  return (
+    <>
+      <form action={handleSubmit}>
+        <input name="text" placeholder="写点什么" />
+        <button type="submit">发送</button>
+      </form>
+
+      <ul>
+        {optimisticComments.map((item) => (
+          <li key={item.id}>{item.text}</li>
+        ))}
+      </ul>
+    </>
+  )
+}
+```
+
+注意点：乐观更新一定要考虑失败回滚或服务端校正结果，否则前端状态可能和真实数据长期不一致。
+
+### useEffectEvent
+
+一句话定义：把 Effect 中需要读取“最新值”但不希望重新触发 Effect 的那部分逻辑提取出来。
+
+适用场景：聊天连接、埋点、订阅回调、事件监听中既要拿到最新值又不想反复重建副作用。
+
+```jsx
+import { useEffect, useEffectEvent } from 'react'
+
+export default function ChatRoom({ roomId, theme }) {
+  const onConnected = useEffectEvent(() => {
+    console.log(`已连接房间，当前主题是 ${theme}`)
+  })
+
+  useEffect(() => {
+    const connection = createConnection(roomId)
+    connection.connect()
+    connection.on('connected', onConnected)
+
+    return () => {
+      connection.disconnect()
+    }
+  }, [roomId])
+
+  return <div>聊天室：{roomId}</div>
+}
+
+function createConnection(roomId) {
+  return {
+    connect() {},
+    disconnect() {},
+    on(eventName, callback) {
+      if (eventName === 'connected') {
+        callback()
+      }
+    },
+  }
+}
+```
+
+注意点：`useEffectEvent` 的目标是拆分 Effect 里的响应式逻辑和非响应式逻辑，不要把它当成普通事件处理函数的通用替代品。
+
+### useFormStatus
+
+一句话定义：在表单内部读取最近一次表单提交的状态。
+
+适用场景：提交按钮禁用、显示 loading、根据表单提交状态切换按钮文案。
+
+```jsx
+import { useActionState } from 'react'
+import { useFormStatus } from 'react-dom'
+
+async function saveProfile(previousState, formData) {
+  const name = formData.get('name')
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  return { message: `${name} 已保存` }
+}
+
+function SubmitButton() {
+  const { pending } = useFormStatus()
+
+  return <button disabled={pending}>{pending ? '保存中...' : '保存资料'}</button>
+}
+
+export default function ProfileForm() {
+  const [state, formAction] = useActionState(saveProfile, { message: '' })
+
+  return (
+    <form action={formAction}>
+      <input name="name" placeholder="请输入姓名" />
+      <SubmitButton />
+      {state.message && <p>{state.message}</p>}
+    </form>
+  )
+}
+```
+
+注意点：`useFormStatus` 必须在对应表单的后代组件里调用，脱离表单上下文单独使用是拿不到状态的。
+
+### 关于 `use`：为什么这里只做补充说明
+
+React 19 里还有一个很重要的 `use` API，它可以在渲染过程中读取 Promise 或 Context，常见于 Server Components、异步资源读取和框架级数据流里。
+
+但它的使用前提、运行环境和约束明显比前面几个 Hook 更特殊，不属于大多数普通业务组件“拿来就写”的第一梯队，所以这篇文章只做提醒：
+
+- 如果你在 Next.js App Router、Server Components、Suspense 数据读取里工作，应该进一步专门学习 `use`
+- 如果你当前主要写的是常规客户端页面，先掌握前面的 Hooks 收益更高
+
+## 怎么选 Hook
+
+下面这张速查表可以帮助你快速判断应该先考虑哪个 Hook：
+
+| 目标                                 | 优先考虑           |
+| ------------------------------------ | ------------------ |
+| 保存简单局部状态                     | `useState`         |
+| 管理复杂状态流转                     | `useReducer`       |
+| 在多个组件间共享值                   | `useContext`       |
+| 操作 DOM 或缓存不触发渲染的值        | `useRef`           |
+| 处理副作用、订阅、请求               | `useEffect`        |
+| 在绘制前同步测量布局                 | `useLayoutEffect`  |
+| 缓存昂贵计算结果                     | `useMemo`          |
+| 稳定函数引用                         | `useCallback`      |
+| 生成稳定的可访问性 ID                | `useId`            |
+| 让非紧急更新不阻塞交互               | `useTransition`    |
+| 延后高频值参与渲染                   | `useDeferredValue` |
+| 管理表单 action 返回状态             | `useActionState`   |
+| 先更新 UI 再等待真实结果             | `useOptimistic`    |
+| 在 Effect 中读取最新值但不重跑副作用 | `useEffectEvent`   |
+| 读取表单提交中的 pending 状态        | `useFormStatus`    |
+
+## 常见误区总结
+
+- 不是所有逻辑都该进 `useEffect`
+- 不是所有函数都值得用 `useCallback`
+- 不是所有计算都需要 `useMemo`
+- `useRef` 不能替代会驱动 UI 的状态
+- `useTransition` 和 `useDeferredValue` 解决的是交互流畅度，不是网络请求本身
+- `useOptimistic` 一定要考虑失败后的真实数据校正
+
+## 这篇文章没有展开哪些 Hook
+
+本文没有详细展开 `useImperativeHandle`、`useSyncExternalStore`、`useInsertionEffect`、`useDebugValue`。如果你在做组件库、外部状态同步、CSS-in-JS 或调试自定义 Hook，再单独深入这些 API 会更合适。

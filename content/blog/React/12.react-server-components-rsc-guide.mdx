@@ -1,0 +1,490 @@
+---
+title: Server Components与RSC
+category: react
+excerpt: React Server Components（RSC）的执行模型，以及它和 SSR、Client Components、Server Functions、Suspense 与 hydration 的关系。
+slug: react-server-components-rsc-guide
+tags: [React, Server Components, RSC, SSR, Hydration]
+---
+
+{/* @format */}
+
+# React Server Components 与 RSC 工作机制指南
+
+`Server Components` 和 `RSC` 不是两个并列概念，而是同一件事的两种叫法。`RSC` 是 `React Server Components` 的缩写。它描述的不是某个单独 API，而是一套新的组件执行架构：**一部分组件在服务器环境执行，一部分组件在客户端环境执行，二者共同组成同一个 React 应用。**
+
+这套架构之所以重要，是因为它把“在哪里获取数据”“哪些代码需要发送到浏览器”“哪些组件负责交互”“初始 HTML 如何生成”这些原本混在一起的问题，拆成了更清晰的几层机制。很多对 RSC 的误解，恰恰来自于把它和 SSR、Server Functions、传统数据请求混为一谈。
+
+本文聚焦 React 19 语义下的 `Server Components / RSC` 工作机制，重点建立一套稳定的技术判断框架，而不是只做概念对比。
+
+## Server Components / RSC 是什么
+
+React 官方对 Server Components 的定义非常明确：  
+它是一类“在打包之前、在一个与客户端应用或 SSR 服务器分离的环境中预先渲染”的组件。
+
+这句话里有三层关键信息：
+
+- 它们是组件，不是额外模板系统
+- 它们在服务器侧执行，而不是在浏览器执行
+- 它们的执行发生在客户端打包结果真正交付之前
+
+React 官方还明确说明，Server Components 可以有两种运行方式：
+
+- 在构建时运行一次
+- 在每次请求到来时运行
+
+因此，RSC 不等于“只能动态服务端渲染”，也不等于“必须有传统 SSR 服务器”。它本质上是一种**组件执行位置**的能力。
+
+来源：
+
+- [Server Components](https://react.dev/reference/rsc/server-components)
+- [React 19](https://react.dev/blog/2024/12/05/react-19)
+
+## 为什么 React 需要 RSC
+
+在没有 Server Components 的常见客户端模式里，页面数据获取通常是这样组织的：
+
+- 浏览器先下载 JS
+- React 在客户端首次渲染
+- `useEffect` 触发请求
+- 请求返回后再次更新界面
+
+这套流程存在几个长期问题：
+
+- 首屏常常要经历“先看到空壳，再发请求，再补内容”
+- 为了服务端数据读取，往往需要再包一层额外 API
+- 某些只在服务器有意义的代码和依赖，也会被迫进入客户端架构设计
+- 浏览器可能被迫下载本不需要在客户端执行的逻辑与依赖
+
+Server Components 试图解决的正是这些问题。React 官方文档明确展示了两类典型价值：
+
+- 静态内容可在构建期直接读取文件系统或 CMS 数据并完成渲染
+- 动态内容可在请求期直接贴近数据层读取，而不必先绕一层客户端 `Effect -> fetch -> API`
+
+因此，RSC 的核心价值可以概括为：
+
+- 把一部分数据读取前移到渲染阶段
+- 把一部分组件执行前移到服务器环境
+- 把不需要在浏览器运行的代码排除在客户端 bundle 之外
+
+## RSC 不是 SSR
+
+这是最需要先讲清的一点。
+
+### SSR 解决什么问题
+
+`SSR` 关心的是：  
+**HTML 在哪里生成，是否在浏览器拿到 JS 之前就先把页面内容输出出来。**
+
+### RSC 解决什么问题
+
+`RSC` 关心的是：  
+**组件代码在哪里执行，哪些组件应该在服务器环境运行，哪些组件应该在客户端运行。**
+
+这两者并不是互斥关系，而是两层不同机制。
+
+更准确地说，RSC 可以和 SSR 配合，也可以从概念上独立理解：
+
+- RSC 决定组件执行位置
+- SSR 决定是否把当前结果先输出成 HTML
+
+React 官方文档也明确写到：Server Components 的结果随后可以“可选地”再进行 SSR，生成页面的初始 HTML。
+
+因此，一句话区分就是：
+
+- `SSR`：HTML 在哪生成
+- `RSC`：组件在哪执行
+
+## Server Components 的执行环境是什么
+
+React 官方把 Server Components 所处的运行环境称为 “server”，并特别强调它是一个与客户端应用、甚至与 SSR server 概念上分离的环境。
+
+这里不要把“分离”狭义理解成“必须是另一台机器”。更准确的理解是：  
+它描述的是一层**执行语义边界**，而不是部署拓扑边界。
+
+在工程上，Server Components 可以：
+
+- 在 CI / 构建机上运行一次
+- 在 Web 服务器上按请求运行
+- 由框架在自己的全栈架构中封装执行
+
+因此，RSC 的“server”首先是执行语义，而不是网络拓扑术语。
+
+## Server Components 能做什么
+
+根据 React 官方文档，Server Components 的优势主要来自服务器环境本身。
+
+### 直接读取数据层
+
+Server Components 可以在 render 中直接读取数据库、文件系统或其他后端数据源。
+
+```tsx
+async function Note({ id }: { id: string }) {
+  const note = await db.notes.get(id)
+
+  return (
+    <div>
+      <p>{note.content}</p>
+    </div>
+  )
+}
+```
+
+这里的核心不是“能写 async 函数”，而是：  
+数据读取发生在渲染阶段，而不是等到客户端挂载后再 `useEffect` 触发第二跳请求。
+
+### 不进入客户端 bundle
+
+React 官方文档明确举例说明：一些只用于服务器侧内容转换的重依赖，例如 Markdown 解析、HTML 清洗等，可以留在 Server Components 中执行，而不需要发送到浏览器。
+
+这意味着：
+
+- 浏览器不需要下载这部分库
+- 首次加载能更聚焦于真正需要交互的客户端代码
+
+### 在 render 中直接 `await`
+
+React 官方把 async components 与 Server Components 紧密联系在一起。Server Components 支持在组件函数内部直接 `await`，这是其关键能力之一。
+
+```tsx
+async function Page({ page }: { page: string }) {
+  const content = await file.readFile(`${page}.md`)
+  return <article>{content}</article>
+}
+```
+
+这不是把副作用搬到组件里，而是因为 Server Components 的 render 本身就运行在服务器环境中，允许这类数据读取直接成为渲染输入。
+
+## Server Components 不能做什么
+
+Server Components 的限制，本质上来自于一个事实：  
+**它们不会作为交互组件在浏览器中持续存在。**
+
+React 官方文档明确指出，Server Components：
+
+- 不能使用交互式 API，如 `useState`
+- 不能定义浏览器端事件处理器，如 `onClick`
+- 不能依赖浏览器 DOM API
+- 不能承担长期驻留客户端内存中的状态逻辑
+
+因此，它们更适合：
+
+- 数据读取
+- 内容组织
+- 静态或半静态结构输出
+- 把结果和数据传给 Client Components
+
+而不适合：
+
+- 表单交互控制
+- 本地状态切换
+- 动画、事件、DOM 操作
+
+## `'use client'` 才是客户端边界声明
+
+React 官方文档明确说明：  
+`'use client'` 用于标记哪些代码要在客户端运行。它作用在模块层级，并把该模块及其传递依赖子树标记为客户端代码。
+
+```tsx
+'use client'
+
+import { useState } from 'react'
+
+export default function Expandable({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <section>
+      <button onClick={() => setOpen((v) => !v)}>toggle</button>
+      {open ? children : null}
+    </section>
+  )
+}
+```
+
+这里需要特别记住两点：
+
+- `'use client'` 标记的是模块边界，而不是单个 JSX 标签
+- 一旦某模块被标记为客户端代码，它的传递依赖也会进入客户端子树
+
+来源：[`'use client'`](https://react.dev/reference/rsc/use-client)
+
+## 没有 “Server Component 指令”
+
+这是 RSC 中最常见的误解之一。
+
+React 官方明确写到：
+
+> Server Components 没有对应的专用指令。  
+> `"use server"` 不是用来声明 Server Components 的。
+
+因此，正确理解应当是：
+
+- 默认情况下，未被 `'use client'` 标记的模块可以作为服务器侧执行
+- `'use server'` 属于 Server Functions，而不是 Server Components 本身
+
+来源：
+
+- [Server Components](https://react.dev/reference/rsc/server-components)
+- [`'use server'`](https://react.dev/reference/rsc/use-server)
+
+## `'use server'` 是什么
+
+`'use server'` 用来声明 **Server Functions**。这些函数可以从客户端代码被调用，本质上是 React 全栈架构里对服务器函数调用的一种一等语义支持。
+
+```tsx
+export async function createNote(formData: FormData) {
+  'use server'
+
+  return db.notes.create({
+    title: String(formData.get('title') ?? ''),
+  })
+}
+```
+
+React 官方文档明确指出：
+
+- `'use server'` 标记的是函数或模块
+- 这些函数从客户端调用时，会触发网络请求
+- 参数和返回值需要满足可序列化要求
+
+因此，这一能力解决的是“客户端如何调用服务器函数”，而不是“组件在哪里执行”。
+
+来源：
+
+- [`'use server'`](https://react.dev/reference/rsc/use-server)
+- [Server Functions](https://react.dev/reference/rsc/server-functions)
+
+## RSC 的真正边界在模块依赖树上
+
+`'use client'` 文档里有一个非常重要、但很容易被忽略的结论：
+
+> 组件之间是父子关系，并不意味着它们一定在同一个执行环境中运行。
+
+原因在于，RSC / Client Components 的划分依据首先是**模块依赖树**，而不是 JSX 树表面上的父子关系。
+
+这会带来两个关键认识：
+
+### 父子关系不等于同环境执行
+
+一个 Server Component 完全可以把某个 Client Component 作为子节点渲染出来。  
+反过来，一个 Client Component 也可以通过接收 JSX props 的方式“显示”由 Server Component 先执行好的内容。
+
+### Client Component 并不直接执行 Server Component 源码
+
+如果一个 Client Component 接收的是由上层 Server Component 先准备好的 JSX 内容，那么它看到的是已经准备好的结果，而不是自己去浏览器里再执行那段服务器组件代码。
+
+这也是为什么“谁是父组件”并不足以判断“谁在哪运行”。
+
+来源：[`'use client'`](https://react.dev/reference/rsc/use-client)
+
+## 一次请求中的 RSC 工作流程
+
+如果把一次典型的请求流程顺序化，可以这样理解：
+
+1. 应用收到页面请求或一次局部刷新请求
+2. 框架开始执行当前请求需要的 Server Components
+3. Server Components 在服务器环境中读取数据并完成渲染计算
+4. 遇到 Client Components 时，服务器不会执行其交互逻辑，而是保留客户端引用边界
+5. 框架把服务器结果、客户端组件引用以及可序列化 props 组织成响应结果
+6. 这个结果可以进一步参与 SSR，生成初始 HTML
+7. 浏览器拿到页面后，只为客户端子树下载和执行必要 JS
+8. 后续导航或刷新局部数据时，可以再次请求新的 Server Component 结果并与当前界面合并
+
+这里需要特别强调的是：  
+浏览器最终看到的不是“Server Component 源码”，而是 Server Components 已经执行后的结果以及客户端边界信息。
+
+这一点是根据 React 官方对 Server Components 执行模型与客户端最终接收结果的描述做出的工程化归纳。
+
+## Server Components 和 Client Components 如何协作
+
+最典型的协作方式是：
+
+- Server Component 负责读数据、组织结构
+- Client Component 负责交互和本地状态
+
+例如：
+
+```tsx
+// Server Component
+import Expandable from './Expandable'
+
+async function Notes() {
+  const notes = await db.notes.getAll()
+
+  return (
+    <div>
+      {notes.map((note) => (
+        <Expandable key={note.id}>
+          <p>{note.content}</p>
+        </Expandable>
+      ))}
+    </div>
+  )
+}
+```
+
+这里的协作边界非常清晰：
+
+- `Notes` 在服务器运行
+- `Expandable` 在客户端运行
+- 服务器先把内容准备好，再把需要交互的壳层交给客户端
+
+这种分工比传统“整页全在客户端跑，再靠 Effect 拉数据”更接近内容与交互分离的自然结构。
+
+## 从 Server Component 传到 Client Component 的数据有什么限制
+
+React 官方文档明确指出：  
+从 Server Component 传给 Client Component 的 props 必须满足可序列化要求。
+
+这意味着你不能随意把所有服务端对象直接传进客户端组件。例如：
+
+- 数据对象通常可以
+- 可序列化的基本类型、数组、普通对象通常可以
+- 但任意闭包、不可序列化实例、依赖服务器环境的对象通常不行
+
+React 官方还指出，当服务器侧模块导入 `'use client'` 模块时，所使用的值必须是 React 组件，或者是支持作为 Client Component props 传递的可序列化值。
+
+来源：[`'use client'`](https://react.dev/reference/rsc/use-client)
+
+## RSC 与 `use` 的关系
+
+React 19 官方把 `use(resource)` 作为正式 API 引入。它允许组件在 render 过程中读取 Promise 或 Context。
+
+在 RSC 语境中，`use` 有两个很重要的含义：
+
+- Server Components 可以直接 `await`
+- Client Components 则可以通过 `use(promise)` 接住从服务器传来的 Promise，并与 Suspense 协作
+
+React 官方 `use` 文档明确展示了这种模式：  
+Server Component 创建 Promise，Client Component 接收这个 Promise 并在 render 中通过 `use` 读取，若尚未完成则交给 Suspense。
+
+这意味着 RSC 与 Suspense 的关系不是“两个可选特性”，而是天然协作的。
+
+来源：[`use`](https://react.dev/reference/react/use)
+
+## RSC 与 Suspense 的关系
+
+如果说 Suspense 解决的是“渲染期等待如何降级和恢复”，那么 RSC 让很多等待直接发生在服务器侧 render 过程中。
+
+这会带来几个关键变化：
+
+- 某些数据等待可以在服务器侧完成，而不是推迟到客户端挂载后
+- 某些等待结果可以和流式输出结合，先发壳层、后发内容
+- 某些 Promise 可以从服务器传给客户端，再由客户端 `use` + Suspense 接住
+
+因此，在现代 React 全栈架构里，RSC、Suspense、Streaming SSR 已经不是孤立能力，而是一条协同链路。
+
+## RSC 与流式 SSR
+
+React 官方文档明确说明：Server Components 的结果可以进一步参与 SSR，生成初始 HTML。与此同时，React 18 之后的流式 SSR 又允许配合 Suspense 边界做渐进输出。
+
+这意味着实际链路经常是：
+
+1. 先执行 Server Components
+2. 得到服务器侧组件结果与客户端边界信息
+3. 再把当前可输出部分流式渲染成 HTML
+4. 浏览器先看到可见内容
+5. 客户端随后接管交互
+
+所以，RSC 不是用来取代 SSR，而是和 SSR 形成分层配合：
+
+- RSC 决定组件执行位置
+- SSR 决定 HTML 输出策略
+- Suspense 决定等待与渐进揭示方式
+
+## RSC 与 Hydration
+
+Hydration 的作用是让浏览器接管已经存在的服务端输出 HTML，并为其附着事件与交互能力。
+
+在 RSC 架构下，需要特别注意：
+
+- 只有 Client Components 对应的那部分交互逻辑需要在浏览器执行和 hydration
+- Server Components 本身不会在浏览器里作为交互组件重新运行
+
+这也是 RSC 减少客户端 JS 体积的重要来源之一。  
+浏览器不需要为纯服务器组件下载整套交互执行代码，只需要为真正的客户端边界准备运行时。
+
+## RSC 与 Server Functions 的区别
+
+这两个能力经常被误认为是一回事，但其实它们解决的是不同问题：
+
+- `Server Components`：组件在服务器执行
+- `Server Functions`：客户端可以调用的服务器函数
+
+更直白地说：
+
+- RSC 解决“渲染什么”
+- Server Functions 解决“客户端如何触发服务器逻辑”
+
+两者经常一起出现，但绝不能混为一谈。
+
+## React 19 下的稳定性与注意点
+
+React 官方在 React 19 文档中给出一个很重要的说明：
+
+- React 19 中，Server Components 作为应用能力已经稳定
+- 但用于构建 RSC bundler / framework 的底层实现 API 仍不保证 semver 稳定
+
+这条信息对普通应用开发者和框架作者的意义不同：
+
+- 对应用开发者而言，可以把 React 19 的 RSC 语义视为正式能力
+- 对框架、打包器作者而言，底层实现集成仍需谨慎锁版本
+
+来源：
+
+- [Server Components](https://react.dev/reference/rsc/server-components)
+- [React 19](https://react.dev/blog/2024/12/05/react-19)
+
+## 常见误区
+
+### RSC 就是 SSR
+
+不是。RSC 处理组件执行位置，SSR 处理 HTML 输出位置。
+
+### `'use server'` 用来声明 Server Component
+
+不是。React 官方明确说明，Server Components 没有专门指令，`'use server'` 用于 Server Functions。
+
+### 没写 `'use client'` 就一定永远只在服务器执行
+
+不应如此绝对化。`'use client'` 标记的是客户端模块边界；组件的执行环境还与模块依赖图和使用方式有关。父子 JSX 关系并不足以直接推断执行环境。
+
+### RSC 可以直接替代所有客户端组件
+
+不能。凡是需要本地状态、事件、DOM API、浏览器能力的逻辑，仍然必须放在 Client Components。
+
+### RSC 就是“把请求搬到组件里”
+
+这种理解不完整。它真正改变的是组件执行架构与数据读取位置，而不仅仅是请求写法。
+
+### RSC 一定需要你自己手写协议层
+
+对大多数应用开发者来说，通常不需要。RSC 的底层协议与 bundler 集成一般由框架承担，应用层主要关心组件边界、数据读取方式和交互职责划分。
+
+## 工程视角下的理解方式
+
+如果把 RSC 压缩成工程上最重要的判断，可以记住下面几条：
+
+- `Server Components` 与 `RSC` 是同一个概念
+- 它首先解决的是组件执行位置，而不是单纯的 HTML 输出
+- 它最适合承载数据读取、内容组织和服务器侧依赖
+- 交互、本地状态、浏览器 API 仍然属于 Client Components
+- `'use client'` 定义客户端模块边界
+- `'use server'` 定义 Server Functions，而不是 Server Components
+- RSC、Suspense、Streaming SSR、hydration 在现代 React 中是一条协同链路
+
+## 文末速查
+
+| 概念                      | 一句话定义                                               |
+| ------------------------- | -------------------------------------------------------- |
+| `RSC / Server Components` | 在服务器环境执行的 React 组件                            |
+| `SSR`                     | 把当前 React 结果输出为 HTML 的机制                      |
+| `Client Components`       | 在浏览器执行、负责交互和本地状态的组件                   |
+| `'use client'`            | 标记客户端模块边界的指令                                 |
+| `'use server'`            | 标记 Server Functions 的指令，不是 Server Component 指令 |
+| `Suspense`                | 处理渲染期等待与降级恢复的边界机制                       |
+| `hydration`               | 客户端接管服务端输出 HTML 并附着交互的过程               |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> RSC 的本质不是“服务端渲染页面”，而是把 React 组件执行架构拆成服务器组件与客户端组件两部分，再与 SSR、Suspense 和 hydration 协同工作。

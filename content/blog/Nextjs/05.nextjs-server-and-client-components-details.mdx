@@ -1,0 +1,251 @@
+---
+title: 服务端组件与客户端组件
+category: nextjs
+excerpt: 围绕默认服务端组件、use client、边界划分、序列化限制、组合方式与常见拆分策略，系统讲清 Next.js App Router 中 Server Components 与 Client Components 的主线语义。
+slug: nextjs-server-and-client-components
+tags: [Next.js, App Router, Server Components, Client Components, use client]
+---
+
+{/* @format */}
+
+# Next.js 服务端组件与客户端组件
+
+App Router 最重要的变化，不是把路由改成了文件系统，而是把组件边界重新分成了服务端与客户端两类。这个边界直接决定：代码在哪里执行、哪些依赖会进入浏览器包体、数据获取应该放在哪里、交互逻辑应该留在哪里。
+
+很多 Next.js 使用上的困惑，本质上都不是“某个 API 不会用”，而是没有先判断组件应该落在服务端还是客户端。这篇文章的目标，就是建立一个足够稳定的判断框架。
+
+官方文档主线参考：
+
+- [Server and Client Components](https://nextjs.org/docs/app/getting-started/server-and-client-components)
+- [use client](https://nextjs.org/docs/app/api-reference/directives/use-client)
+- [use server](https://nextjs.org/docs/app/api-reference/directives/use-server)
+
+## 先建立一个核心认知
+
+在 App Router 中：
+
+- `page` 和 `layout` 默认是 Server Components
+- 只有显式写了 `'use client'` 的文件才会进入客户端组件语义
+- 组件边界不是风格问题，而是执行位置和打包边界问题
+
+因此，判断的第一步不再是“这个组件用不用 Hook”，而是“这个组件到底该运行在服务器还是浏览器”。
+
+## Server Components
+
+一句话定义：Server Components 是默认运行在服务器端的组件，不会把组件代码本身发送到浏览器执行。
+
+它解决什么问题：很多页面内容本质上只是读取数据并输出 UI，不需要在浏览器里拥有完整运行时代码。Server Components 让这类部分可以更轻、更早、更接近数据源地执行。
+
+什么时候用：
+
+- 页面主体内容渲染
+- 读取数据库、CMS、内部接口
+- 不依赖浏览器 API 和交互状态的展示型组件
+
+```tsx
+export default async function Page() {
+  const response = await fetch('https://api.vercel.app/blog')
+  const posts = await response.json()
+
+  return (
+    <ul>
+      {posts.map((post: { id: string; title: string }) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+常见注意点：Server Components 不是“SSR 的另一个名字”。它强调的是组件执行位置和客户端包体边界，而不是单纯的 HTML 预渲染策略。来源：[Server and Client Components](https://nextjs.org/docs/app/getting-started/server-and-client-components)
+
+## Client Components
+
+一句话定义：Client Components 是需要在浏览器中执行的组件，必须通过 `'use client'` 指令显式标记。
+
+它解决什么问题：交互事件、浏览器 API、本地状态、Effect 和大部分客户端库都需要浏览器执行环境，这些能力必须放入客户端组件边界。
+
+什么时候用：
+
+- 点击、输入、拖拽、动画
+- `useState`、`useEffect`
+- `window`、`localStorage`
+- 依赖浏览器运行时的第三方库
+
+```tsx
+'use client'
+
+import { useState } from 'react'
+
+export function Counter() {
+  const [count, setCount] = useState(0)
+
+  return <button onClick={() => setCount(count + 1)}>{count}</button>
+}
+```
+
+常见注意点：`'use client'` 会把该文件及其依赖链的一部分拉入客户端打包边界，因此不应因为一个小按钮交互就把整页都标成客户端组件。来源：[use client](https://nextjs.org/docs/app/api-reference/directives/use-client)
+
+## 为什么默认应该先想服务端组件
+
+Next.js 官方主线的一个重要变化是：默认先用 Server Components，再把必须交互的部分下沉为 Client Components。
+
+这条主线成立的原因有三点：
+
+- 数据获取通常更适合靠近服务端
+- 浏览器包体应尽量小
+- 不是所有 UI 都需要在客户端重新执行
+
+因此，现代 Next.js 的组件设计通常不是“页面默认客户端，再优化成服务端”，而是相反。
+
+## use client 的边界含义
+
+一句话定义：`'use client'` 是文件级指令，用于把当前文件声明为客户端组件入口。
+
+它解决什么问题：React 本身并不知道某个组件该在浏览器还是服务器运行，Next.js 通过该指令建立明确边界。
+
+```tsx
+'use client'
+
+import { useEffect } from 'react'
+
+export function ThemeListener() {
+  useEffect(() => {
+    console.log(window.location.pathname)
+  }, [])
+
+  return null
+}
+```
+
+常见注意点：这个指令只需要放在客户端入口文件顶部，而不是每一个被它导入的子组件里重复声明。更重要的是，它会影响整条导入边界，因此应尽量把客户端入口做小。
+
+## 什么时候必须使用客户端组件
+
+更稳定的判断标准通常是：
+
+- 需要事件处理：客户端组件
+- 需要本地状态：客户端组件
+- 需要浏览器 API：客户端组件
+- 需要纯展示和服务端读取数据：优先服务端组件
+
+如果一个组件既需要服务端数据又需要局部交互，通常更好的拆法不是整个组件全变客户端，而是：
+
+- 外层服务端组件负责获取和组织数据
+- 内层小型客户端组件负责交互部分
+
+## 服务端组件与客户端组件如何组合
+
+最常见的组合方式，是由服务端组件把可序列化的数据传给客户端组件：
+
+```tsx
+import { LikeButton } from './like-button'
+
+export default async function PostCard() {
+  const post = { id: '1', title: 'RSC', likes: 12 }
+
+  return (
+    <article>
+      <h2>{post.title}</h2>
+      <LikeButton likes={post.likes} />
+    </article>
+  )
+}
+```
+
+```tsx
+'use client'
+
+export function LikeButton({ likes }: { likes: number }) {
+  return <button>Like {likes}</button>
+}
+```
+
+常见注意点：从服务端组件传给客户端组件的 props 必须可序列化。函数、类实例、未序列化资源句柄等都不能直接跨过这条边界。
+
+## 序列化限制
+
+一句话定义：服务端到客户端之间传递的 props 需要能够被 React Server Components 协议安全序列化。
+
+它解决什么问题：服务端组件和客户端组件不是运行在同一个 JavaScript 上下文中，框架需要把数据从服务器发送到浏览器。
+
+什么时候会踩坑：
+
+- 把函数当 props 直接从服务端传给客户端
+- 传数据库连接、类实例、复杂不可序列化对象
+- 误把服务端闭包语义当成本地组件树共享
+
+常见注意点：如果确实需要把“操作”跨边界传递，应该考虑 Server Actions，而不是硬传普通函数。
+
+## Providers 放在哪里
+
+很多应用会使用 Theme、UI 配置、Query Client 或状态管理 Provider。一个稳定的做法通常是：
+
+- 根页面和大部分布局仍保持服务端
+- 单独建立一个小型客户端 Provider 入口
+- 在 layout 中引用这个客户端 Provider
+
+```tsx
+import { Providers } from './providers'
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html lang="zh-CN">
+      <body>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  )
+}
+```
+
+这样既能使用客户端上下文，又不会把整个根布局都推入客户端边界。
+
+## 一个更稳的拆分顺序
+
+在真实项目里，更稳定的拆分顺序通常是：
+
+- 默认把页面和大块展示组件保留为服务端组件
+- 找出必须交互的最小部分
+- 只把这部分下沉为客户端组件
+- 通过可序列化 props 传递所需数据
+- 如果需要跨边界触发服务端写操作，再引入 Server Actions
+
+这条顺序的核心，是让“客户端化”成为局部选择，而不是默认姿态。
+
+## 常见误区
+
+### 误区一：只要用了 React，就应该优先客户端组件
+
+不准确。App Router 的默认语义恰恰是先服务端，再局部客户端。
+
+### 误区二：Server Components 就等于没有交互
+
+不准确。真正的交互部分可以由内部客户端组件承载，外层仍然是服务端组件。
+
+### 误区三：给根布局加 `'use client'` 最省事
+
+短期省事，长期会显著扩大客户端包体和边界污染范围，通常不是好选择。
+
+### 误区四：服务端和客户端组件之间可以像普通 React props 一样随意传值
+
+不准确。跨边界传值受序列化约束，尤其不能随意传普通函数或运行时对象。
+
+## 文末速查
+
+| 场景 | 优先想到的组件边界 |
+| --- | --- |
+| 读取数据并输出页面 | Server Component |
+| 事件处理和本地状态 | Client Component |
+| 浏览器 API | Client Component |
+| 共享外壳但尽量减小包体 | 外层 Server，内层 Client |
+| Provider 接入 | 小型客户端 Providers 包裹服务端布局 |
+| 跨边界触发服务端写操作 | Server Actions |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> 在 App Router 中，组件设计首先是“边界设计”，而不是“Hook 设计”。

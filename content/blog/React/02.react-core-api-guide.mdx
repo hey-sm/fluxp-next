@@ -1,0 +1,361 @@
+---
+title: API
+category: react
+excerpt: 按 React 18 与 React 19 官方文档整理常用核心 API，重点讲清 Fragment、StrictMode、Suspense、createContext、lazy、memo、startTransition 与 use。
+slug: react-core-api-guide
+tags: [React 18, React 19, API, lazy, memo, Suspense]
+---
+
+{/* @format */}
+
+# React 18 与 React 19 核心 API 合集
+
+这篇文章属于 `React 核心 API 系列`。它不重复展开 Hooks 主线，而是聚焦 `react` 包里最常见、最容易在官方文档里看到、同时又最容易被混淆的那批核心 API。Hooks 已经由现有的 Hooks 专文单独整理；本文的目标是帮助你建立另一条更清晰的认知线索：**除了 Hooks，React 官方还提供了哪些内置组件和 API，它们分别解决什么问题。**
+
+在 `react.dev` 的参考文档体系里，常见入口大致可以分成几类：
+
+- Hooks：如 `useState`、`useEffect`、`useTransition`
+- Components：如 `Fragment`、`StrictMode`、`Suspense`
+- APIs：如 `createContext`、`lazy`、`memo`、`startTransition`
+- `react-dom` APIs：如 `createRoot`、`hydrateRoot`、`createPortal`
+
+本文只讲“非 Hook 主线”的核心 API，并按 React 18 与 React 19 的共同语义和新增变化来组织内容。
+
+## React 18 / React 19 共同高频的组件类 API
+
+这几项虽然写起来像 JSX 组件，但它们承担的不是普通业务组件职责，而是 React 运行时层面的结构、检查和渲染边界能力。
+
+### Fragment
+
+一句话定义：`Fragment` 用来把多个 JSX 节点分组在一起，同时不额外生成包裹它们的 DOM 节点。
+
+它解决什么问题：组件需要返回多个相邻节点，但你不想为了满足 JSX 的单根要求而多包一层 `div`。
+
+什么时候用：
+
+- 组件需要返回多个兄弟节点
+- 不希望额外 DOM 影响布局、样式或语义结构
+- 在列表里需要给一组节点加 `key`
+
+```tsx
+import { Fragment } from 'react'
+
+export function Post() {
+  return (
+    <>
+      <h1>标题</h1>
+      <p>正文</p>
+    </>
+  )
+}
+
+export function PostList({ posts }: { posts: { id: number; title: string; body: string }[] }) {
+  return posts.map((post) => (
+    <Fragment key={post.id}>
+      <h2>{post.title}</h2>
+      <p>{post.body}</p>
+    </Fragment>
+  ))
+}
+```
+
+常见注意点：如果你需要给 `Fragment` 传 `key`，不能使用 `<>...</>` 简写，必须显式写成 `<Fragment key={...}>...</Fragment>`。来源：[Fragment](https://react.dev/reference/react/Fragment)
+
+### StrictMode
+
+一句话定义：`StrictMode` 是开发环境下的额外检查容器，用来帮助你尽早发现不纯渲染、Effect 清理缺失、ref 清理缺失和已废弃 API 的问题。
+
+它解决什么问题：很多代码在“只跑一次”时表面正常，但在现代 React 的重复渲染、重试和并发场景下会暴露出隐藏 bug。`StrictMode` 用开发期的额外检查把这些问题提前暴露出来。
+
+什么时候用：
+
+- React 应用根部启用开发检查
+- 对局部子树单独加严检查
+- 排查组件为什么会在开发环境多 render 一次、多跑一次 Effect
+
+```tsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { App } from './App'
+
+const container = document.getElementById('root')
+
+if (container) {
+  createRoot(container).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+}
+```
+
+常见注意点：`StrictMode` 的重复渲染、重复执行 Effect 和重复触发 ref 回调，都是**开发环境行为**，不会进入生产构建。不要把它误判为 React 线上 bug。来源：[StrictMode](https://react.dev/reference/react/StrictMode)
+
+### Suspense
+
+一句话定义：`Suspense` 是 React 的等待边界，用来声明“当这部分子树暂时无法完成渲染时，先显示一个备用界面”。
+
+它解决什么问题：当懒加载代码、渲染期 Promise 或 Suspense-enabled 数据源尚未准备好时，React 需要一个正式的渲染降级边界，而不是让整棵树直接失败。
+
+什么时候用：
+
+- `lazy` 代码分割
+- `use(promise)` 渲染期读取
+- 流式 SSR / hydration 的边界设计
+
+```tsx
+import { Suspense, lazy } from 'react'
+
+const UserPanel = lazy(() => import('./UserPanel'))
+
+export function Dashboard() {
+  return (
+    <Suspense fallback={<p>Loading panel...</p>}>
+      <UserPanel />
+    </Suspense>
+  )
+}
+```
+
+常见注意点：`Suspense` 只会响应 Suspense-enabled 数据源。React 官方明确说明，放在 `useEffect` 里的请求或事件处理函数中的异步逻辑，不会自动触发 `Suspense`。来源：[Suspense](https://react.dev/reference/react/Suspense)
+
+## React 18 / React 19 共同高频的核心 API
+
+下面这些 API 都来自 `react` 包本身，它们不是 Hook，但在实际项目里同样非常高频。
+
+### createContext
+
+一句话定义：`createContext` 用来创建一个上下文对象，让组件树中的多个后代可以共享同一份值。
+
+它解决什么问题：避免把主题、语言、权限、配置这类共享值层层手动透传。
+
+什么时候用：
+
+- 一棵组件树内需要跨层共享值
+- 多个深层子组件都要读同一份配置
+- 你想用原生方案做有限范围的共享状态
+
+```tsx
+import { createContext, useContext, useState } from 'react'
+
+const ThemeContext = createContext<'light' | 'dark'>('light')
+
+function ThemeButton() {
+  const theme = useContext(ThemeContext)
+  return <button data-theme={theme}>切换主题</button>
+}
+
+export function App() {
+  const [theme] = useState<'light' | 'dark'>('dark')
+
+  return (
+    <ThemeContext.Provider value={theme}>
+      <ThemeButton />
+    </ThemeContext.Provider>
+  )
+}
+```
+
+常见注意点：`defaultValue` 只是“最后兜底值”，只有树上完全没有匹配 Provider 时才会生效，而且它是静态的，不会随时间变化。来源：[createContext](https://react.dev/reference/react/createContext)
+
+### lazy
+
+一句话定义：`lazy` 让 React 组件的代码在第一次真正渲染到它时才按需加载。
+
+它解决什么问题：把不需要首屏立即下载的组件代码拆出去，减少初始包体积。
+
+什么时候用：
+
+- 页面级或大模块级代码分割
+- 后台系统中的低频面板、详情弹层、预览器
+- 配合 `Suspense` 做按需加载
+
+```tsx
+import { Suspense, lazy } from 'react'
+
+const MarkdownPreview = lazy(() => import('./MarkdownPreview'))
+
+export function Editor() {
+  return (
+    <Suspense fallback={<div>Loading preview...</div>}>
+      <MarkdownPreview />
+    </Suspense>
+  )
+}
+```
+
+常见注意点：`lazy` 声明必须放在组件外层模块顶级位置，不要写在组件函数内部，否则每次重渲染都会重新创建懒组件定义，导致状态重置。它也必须配合 `Suspense` 使用。来源：[lazy](https://react.dev/reference/react/lazy)
+
+### memo
+
+一句话定义：`memo` 通过比较前后 props，跳过那些“输入没变、输出也不该变”的组件重渲染。
+
+它解决什么问题：父组件频繁重渲染时，避免某些纯展示型子组件被无意义地重复执行。
+
+什么时候用：
+
+- 子组件渲染成本较高
+- 父组件高频更新，但子组件常常 props 不变
+- 你已经确认问题是“无意义重渲染”而不是别的性能瓶颈
+
+```tsx
+import { memo, useState } from 'react'
+
+const ProfileCard = memo(function ProfileCard({ name }: { name: string }) {
+  console.log('ProfileCard render')
+  return <div>{name}</div>
+})
+
+export function Page() {
+  const [count, setCount] = useState(0)
+
+  return (
+    <>
+      <button onClick={() => setCount((c) => c + 1)}>{count}</button>
+      <ProfileCard name="Fluxp" />
+    </>
+  )
+}
+```
+
+常见注意点：`memo` 是性能优化手段，不是语义保证。React 官方明确说明，React 仍然可能重新渲染它；并且如果你每次都传入新的对象、数组或函数，默认浅比较依然会判定 props 变化。来源：[memo](https://react.dev/reference/react/memo)
+
+### startTransition
+
+一句话定义：`startTransition` 用来把一批状态更新标记为“非紧急更新”，让 React 可以在后台推进它们。
+
+它解决什么问题：当某些更新计算量较大、但又不需要像输入框键入那样立刻完成时，避免它们抢占用户的紧急交互响应。
+
+什么时候用：
+
+- tab 切换、路由切换、图表切换
+- 大列表筛选或重排
+- 希望更新可中断、可被更紧急输入抢占
+
+```tsx
+import { startTransition, useState } from 'react'
+
+export function TabContainer() {
+  const [tab, setTab] = useState('overview')
+
+  function selectTab(nextTab: string) {
+    startTransition(() => {
+      setTab(nextTab)
+    })
+  }
+
+  return (
+    <>
+      <button onClick={() => selectTab('overview')}>Overview</button>
+      <button onClick={() => selectTab('reports')}>Reports</button>
+      <div>当前标签：{tab}</div>
+    </>
+  )
+}
+```
+
+常见注意点：`startTransition` 不能用来控制文本输入这类紧急更新；它标记的是“可延后、不阻塞当前交互”的更新。另外它本身不提供 `isPending`，如果你需要展示过渡中状态，应该用 `useTransition`。来源：[startTransition](https://react.dev/reference/react/startTransition)
+
+## React 19 中需要额外关注的 API 与变化
+
+React 19 没有把这些核心 API 推翻重来，但确实补了几处很值得单独说明的变化。
+
+### use
+
+一句话定义：`use` 允许你在 render 过程中读取 Promise 或 Context，并把等待过程直接交给 React。
+
+它解决什么问题：把“渲染期读取资源”这件事提升为正式 API，而不是只靠框架封装或内部机制。
+
+什么时候用：
+
+- 在 React 19 中读取 Promise
+- 在需要时读取 Context，并且你希望它可以写在条件分支或循环中
+- 配合 `Suspense` 处理渲染期等待
+
+```tsx
+import { Suspense, use } from 'react'
+
+function Message({ messagePromise }: { messagePromise: Promise<string> }) {
+  const message = use(messagePromise)
+  return <p>{message}</p>
+}
+
+export function MessagePage({ messagePromise }: { messagePromise: Promise<string> }) {
+  return (
+    <Suspense fallback={<p>Loading message...</p>}>
+      <Message messagePromise={messagePromise} />
+    </Suspense>
+  )
+}
+```
+
+常见注意点：`use` 是 React 19 正式主线 API，不属于 React 18；并且它和传统 Hook 有一处重要不同，React 官方明确说明它可以写在条件语句和循环里，但仍然必须写在组件或自定义 Hook 的执行上下文中，不能写到普通函数或 `try/catch` 包裹里。来源：[use](https://react.dev/reference/react/use)
+
+### createContext 在 React 19 中的 Provider 新写法
+
+React 18 及更早版本中，常见写法是：
+
+```tsx
+<ThemeContext.Provider value={theme}>
+  <Page />
+</ThemeContext.Provider>
+```
+
+React 19 开始，官方支持直接把 Context 对象本身当成 Provider 使用：
+
+```tsx
+<ThemeContext value={theme}>
+  <Page />
+</ThemeContext>
+```
+
+这项变化的意义不是“Context 机制重写”，而是 Provider 写法更直接。官方文档同时说明，`SomeContext.Provider` 现在属于 React 19 之前的旧写法。来源：[createContext](https://react.dev/reference/react/createContext)
+
+### memo 与 React Compiler 的关系
+
+React 19 文档体系里，`memo` 旁边经常会出现 React Compiler 相关说明。官方文档明确指出：**如果项目启用了 React Compiler，通常就不再需要手动为大多数组件包一层 `memo`**，因为编译器会自动做等价的组件级记忆化优化。
+
+这里需要保持两个边界：
+
+- 这不意味着 `memo` 被废弃
+- 也不意味着 React 19 默认就自动启用了 Compiler
+
+更准确的理解是：  
+在未启用 Compiler 的普通项目里，`memo` 仍然是标准性能 API；在启用 Compiler 的项目里，很多手动 `memo` 会变得没那么必要。来源：[memo](https://react.dev/reference/react/memo)
+
+## 官网里你还会看到但本文不展开的 API
+
+为了不把一篇“核心 API 总览”写成大全，下面这些 API 只做导航式说明，不在本文正文展开。
+
+### `react-dom` 常见 API
+
+- `createRoot`：React 18 之后的客户端挂载入口
+- `hydrateRoot`：服务端 HTML 的客户端接管入口
+- `createPortal`：把子树渲染到当前 DOM 层级之外
+- `flushSync`：强制同步刷出更新
+
+### legacy API
+
+- `forwardRef`
+- `Children`
+- `cloneElement`
+- `createElement`
+
+这些 API 仍然存在，但它们不是这篇文章要建立的主线。像 `forwardRef` 已经在 Ref 专文里单独展开，其他 legacy API 也更适合按场景单独讲，而不是混进现代核心 API 主线上。
+
+## 文末速查
+
+| 场景                                        | 优先想到的 API    |
+| ------------------------------------------- | ----------------- |
+| 返回多个节点但不想多包一层 DOM              | `Fragment`        |
+| 想在开发期尽早暴露不纯渲染和清理问题        | `StrictMode`      |
+| 渲染期等待时先显示备用界面                  | `Suspense`        |
+| 跨层共享主题、语言、权限等值                | `createContext`   |
+| 组件代码按需加载                            | `lazy`            |
+| 父组件频繁更新时跳过无意义子组件重渲染      | `memo`            |
+| 把更新标记为非紧急、可后台推进              | `startTransition` |
+| 在 React 19 中渲染期读取 Promise 或 Context | `use`             |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Hooks 解决的是“组件内部如何组织状态与副作用”，而这些核心 API 解决的是“React 树如何分组、检查、共享、等待、延迟加载和调度更新”。

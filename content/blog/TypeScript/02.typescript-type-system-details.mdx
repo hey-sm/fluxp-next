@@ -1,0 +1,265 @@
+---
+title: 类型系统
+category: ts
+excerpt: 从结构化类型、可赋值性到 any、unknown、never、void 的边界，系统讲清 TypeScript 类型系统的判断逻辑。
+slug: typescript-type-system-details
+tags: [TypeScript, Type System, any, unknown, never, void]
+---
+
+{/* @format */}
+
+# TypeScript 类型系统详解
+
+很多人学 TypeScript 时，会先记住一批语法：联合类型、接口、泛型、工具类型。但真正让项目稳定的，往往不是语法量，而是是否理解 TypeScript 的判断逻辑。为什么两个结构看起来不同的对象却能互相赋值？为什么 `unknown` 比 `any` 更安全？为什么 `never` 会在某些分支里出现？这些问题都属于类型系统层，而不是语法层。
+
+这篇文章的目标就是建立一套更底层的认知：TypeScript 到底如何理解类型、比较类型和决定赋值是否成立。只有这一层清晰了，后面的高级类型和工程实践才不会停留在“背规则”。
+
+官方文档主线参考：
+
+- [The TypeScript Type System](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html)
+- [Object Types](https://www.typescriptlang.org/docs/handbook/2/objects.html)
+- [Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)
+
+## 先建立一个核心认知
+
+TypeScript 不是名义类型系统，而是**结构化类型系统**。这意味着它判断两个值是否兼容，看的不是“它们是不是来自同一个声明名字”，而是“它们的结构能不能对得上”。
+
+这会直接带来一个非常重要的结论：
+
+- 在很多场景下，类型兼容性取决于结构，而不是声明出处
+
+```ts
+type User = { id: string; name: string }
+
+const user = { id: '1', name: 'Ada', active: true }
+
+const target: User = user
+```
+
+这里虽然 `user` 多了 `active` 字段，但它至少满足 `User` 所要求的结构，因此赋值成立。
+
+## 结构化类型到底意味着什么
+
+一句话定义：在结构化类型系统里，只要一个值具备目标类型要求的必要结构，它就可以被视为兼容。
+
+它解决什么问题：JavaScript 世界中的对象往往是按形状协作，而不是按类名协作。TypeScript 的结构化模型更贴近这种现实。
+
+什么时候要特别意识到它：
+
+- 对象赋值
+- 函数参数传递
+- API 数据映射
+- 组件 props 传值
+
+常见注意点：结构兼容的好处是灵活，但代价是有时你以为“这是两个不同概念”，编译器却觉得它们能互通。因此复杂业务里经常需要通过更清晰的类型设计来增加语义边界，而不是只依赖结构本身。
+
+## 可赋值性：TypeScript 最核心的判断问题
+
+对 TypeScript 来说，最基础的问题不是“这个语法对不对”，而是：
+
+> 一个值能不能赋给另一个类型位置？
+
+这叫可赋值性。它贯穿了所有场景：
+
+- 变量赋值
+- 函数传参
+- 返回值
+- 泛型约束
+- 条件类型推导
+
+例如：
+
+```ts
+type User = { id: string; name: string }
+
+function printUser(user: User) {
+  console.log(user.name)
+}
+
+printUser({ id: '1', name: 'Ada' })
+```
+
+这里函数调用是否成立，本质上也是一次可赋值性判断：传入对象能否赋给参数 `User`。
+
+## 多出来的字段为什么有时可以，有时不可以
+
+这是 TypeScript 初学者最容易困惑的问题之一。
+
+```ts
+type User = { id: string; name: string }
+
+const data = { id: '1', name: 'Ada', active: true }
+
+const user: User = data
+```
+
+这段代码成立，因为 `data` 已经是一个变量值，TypeScript 在这里做的是结构兼容判断。
+
+但下面这样可能报错：
+
+```ts
+const user: User = { id: '1', name: 'Ada', active: true }
+```
+
+这时会触发**多余属性检查**。它不是在否定结构化类型本身，而是在对象字面量直接赋给目标类型时，额外帮你发现疑似拼错字段或不符合契约的输入。来源：[Excess Property Checks](https://www.typescriptlang.org/docs/handbook/2/objects.html)
+
+一个稳定的理解方式是：
+
+- 结构兼容是主规则
+- 多余属性检查是对象字面量上的额外保护
+
+## any：退出类型系统
+
+一句话定义：`any` 表示这个值基本不再受类型系统约束。
+
+它解决什么问题：在迁移旧代码、第三方类型缺失或确实无法短时间建模时，`any` 提供了退出机制。
+
+什么时候用：
+
+- 极短期迁移兜底
+- 临时兼容没有类型的旧代码
+
+```ts
+let value: any = 42
+value.trim()
+value.notExist().foo.bar
+```
+
+常见注意点：`any` 的危险不在于“它不优雅”，而在于它会让错误穿透整个调用链。一个 `any` 往往会污染一大片下游代码。官方文档也明确建议尽量避免无边界使用 `any`。来源：[Basic Types](https://www.typescriptlang.org/docs/handbook/2/basic-types.html)
+
+## unknown：安全的未知值
+
+一句话定义：`unknown` 表示“现在未知，但必须在使用前先证明它是什么”。
+
+它解决什么问题：很多边界输入本来就不可信，例如接口返回、URL 参数、localStorage、第三方 SDK。与其直接放弃类型，不如明确表示“先未知”。
+
+```ts
+function handle(value: unknown) {
+  if (typeof value === 'string') {
+    return value.toUpperCase()
+  }
+
+  return ''
+}
+```
+
+常见注意点：如果你还没验证它是什么，就不能像 `any` 那样随意调用属性和方法。也正是因为这个约束，`unknown` 更适合边界层。来源：[Basic Types](https://www.typescriptlang.org/docs/handbook/2/basic-types.html)
+
+## never：不应该出现的值
+
+一句话定义：`never` 表示“不可能存在的值”。
+
+它解决什么问题：在控制流分析里，当某个分支理论上不可能再有值时，TypeScript 会推导出 `never`。它在穷尽性检查和不返回的函数中尤其有价值。
+
+```ts
+type Status = 'idle' | 'loading' | 'success'
+
+function renderStatus(status: Status) {
+  switch (status) {
+    case 'idle':
+      return 'idle'
+    case 'loading':
+      return 'loading'
+    case 'success':
+      return 'success'
+    default: {
+      const exhaustiveCheck: never = status
+      return exhaustiveCheck
+    }
+  }
+}
+```
+
+常见注意点：`never` 不是“空值”，也不是“还没赋值”。它表达的是“理论上走不到这里”。这让它特别适合做联合类型的穷尽性检查。来源：[The never Type](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#the-never-type)
+
+## void：忽略返回值，而不是没有值的变量类型
+
+一句话定义：`void` 通常用于函数返回值，表示调用方不关心或不应依赖其返回结果。
+
+它解决什么问题：很多函数的职责不是“计算一个值”，而是执行动作，例如日志、更新、提交、事件处理。
+
+```ts
+function logMessage(message: string): void {
+  console.log(message)
+}
+```
+
+常见注意点：`void` 的主战场是函数返回值位置，不是普通变量建模。把它当成某种“值类型”来普遍使用，通常说明类型建模已经偏离问题本身。来源：[More on Functions](https://www.typescriptlang.org/docs/handbook/2/functions.html)
+
+## null 与 undefined 的边界
+
+TypeScript 对空值的严格程度，很大程度上取决于 `strictNullChecks`。
+
+当它开启时：
+
+- `null` 和 `undefined` 有自己独立类型
+- 你不能把它们随意塞进需要具体值的位置
+- 许多运行时潜在空值错误会提前暴露
+
+```ts
+function findUser(id: string): { id: string } | undefined {
+  if (id === '1') return { id: '1' }
+  return undefined
+}
+```
+
+此时调用方必须认真处理“可能不存在”这件事，而不是假装它一定存在。来源：[strictNullChecks](https://www.typescriptlang.org/tsconfig/strictNullChecks.html)
+
+## 可选属性到底表示什么
+
+一句话定义：`foo?: T` 表示这个属性可以不存在。
+
+它解决什么问题：很多对象并不是总有一组完全固定字段，有些字段是有条件出现的。
+
+```ts
+interface UserProfile {
+  id: string
+  avatarUrl?: string
+}
+```
+
+常见注意点：可选属性和“属性值可以是 `undefined`”不是完全同一回事，尤其在 `exactOptionalPropertyTypes` 开启后更明显。这个选项会严格区分“属性缺失”和“属性存在但值是 `undefined`”。来源：[exactOptionalPropertyTypes](https://www.typescriptlang.org/tsconfig/exactOptionalPropertyTypes.html)
+
+## 函数兼容性为什么更复杂
+
+函数类型兼容性不只是比较返回值，还要比较参数列表。尤其在回调函数场景里，TypeScript 会做一系列与可赋值性有关的判断。
+
+例如：
+
+```ts
+type Handler = (value: string) => void
+
+const fn: Handler = (value) => {
+  console.log(value)
+}
+```
+
+在更复杂场景里，参数更宽还是更窄、返回值更具体还是更泛，都可能影响兼容性。这也是为什么函数类型通常比对象类型更值得认真建模。来源：[More on Functions](https://www.typescriptlang.org/docs/handbook/2/functions.html)
+
+## 类型系统的工程意义
+
+理解这些边界的真正价值，不在于考试答题，而在于工程判断会变清晰：
+
+- 边界输入优先用 `unknown`
+- 不要轻易用 `any` 污染整个调用链
+- 用 `never` 做穷尽性检查
+- 理解结构兼容和多余属性检查不是矛盾，而是不同层次的规则
+- 对空值严格处理，而不是依赖运行时运气
+
+一旦这一层建立起来，后面的泛型、工具类型和类型设计模式都会容易得多。
+
+## 文末速查
+
+| 概念       | 一句话理解                         |
+| ---------- | ---------------------------------- |
+| 结构化类型 | 看结构是否兼容，不看声明名是否相同 |
+| 可赋值性   | 判断一个值能否放进某个类型位置     |
+| `any`      | 退出类型系统                       |
+| `unknown`  | 安全的未知值，先判断再使用         |
+| `never`    | 理论上不可能出现的值               |
+| `void`     | 函数调用方不应依赖返回结果         |
+| 可选属性   | 属性可以不存在                     |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> TypeScript 的类型系统核心不是“会写多少语法”，而是理解编译器如何判断“这个值能不能安全地放到这里”。

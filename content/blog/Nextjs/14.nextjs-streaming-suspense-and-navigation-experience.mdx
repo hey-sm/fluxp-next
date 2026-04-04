@@ -1,0 +1,184 @@
+---
+title: Streaming 与 Suspense
+category: nextjs
+excerpt: 围绕 Streaming、loading.tsx、Suspense、预取与客户端导航，系统讲清 Next.js App Router 中页面等待策略与导航体验的核心机制。
+slug: nextjs-streaming-and-suspense
+tags: [Next.js, Streaming, Suspense, Navigation, loading.tsx]
+---
+
+{/* @format */}
+
+# Next.js Streaming 与 Suspense
+
+传统前端常把页面等待理解为一个整页过程：要么等完再显示，要么先给一个全局 loading。App Router 改变的，正是这种粗粒度等待模型。借助 React Suspense、路由段边界和 Streaming，Next.js 可以让页面按边界逐步可见，导航体验也因此更接近“持续反馈”而不是“整页阻塞”。
+
+这篇文章的重点，是把 Streaming、Suspense、`loading.tsx` 和导航预取放到同一条链路里理解，而不是分别看成几个零散特性。
+
+官方文档主线参考：
+
+- [Loading UI and Streaming](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming)
+- [Linking and Navigating](https://nextjs.org/docs/app/getting-started/linking-and-navigating)
+- [Fetching Data](https://nextjs.org/docs/app/getting-started/fetching-data)
+
+## 先建立一个整体认知
+
+现代 Next.js 的等待与导航体验由四个部分共同决定：
+
+- 路由段级边界：`loading.tsx`
+- 组件级边界：`<Suspense>`
+- 服务端分段返回：Streaming
+- 客户端预取与 Router Cache
+
+理解它们的关系后，很多“为什么这个页面会先看到一部分、为什么切换时这么快”的现象都会变得清晰。
+
+## Suspense
+
+一句话定义：Suspense 是 React 提供的等待边界机制，用于在某部分内容尚未就绪时先显示 fallback。
+
+它解决什么问题：不同模块的数据速度不同，如果没有边界，整个页面只能一起等待；有了 Suspense，慢模块可以局部延后。
+
+什么时候用：
+
+- 仪表盘中的慢面板
+- 详情页中非首要信息块
+- 评论区、推荐区、统计区等后置内容
+
+```tsx
+import { Suspense } from 'react'
+
+export default function Page() {
+  return (
+    <main>
+      <Summary />
+      <Suspense fallback={<div>Loading analytics...</div>}>
+        <Analytics />
+      </Suspense>
+    </main>
+  )
+}
+```
+
+常见注意点：Suspense 最有价值的地方在于“边界设计”，而不是给 fallback 换皮肤。边界划分不合理，再精致的 loading UI 也无法改善等待结构。
+
+## loading.tsx
+
+一句话定义：`loading.tsx` 是 route segment 级的自动 Suspense 边界入口。
+
+它解决什么问题：用户导航到一个新路由段时，不应整页白屏等待，而应尽快看到该段的加载骨架。
+
+什么时候用：
+
+- 页面切换后的首个加载反馈
+- 详情页、列表页、后台子页等常规段级加载态
+
+```tsx
+export default function Loading() {
+  return <div>Loading page...</div>
+}
+```
+
+常见注意点：`loading.tsx` 解决的是段级等待体验，而不是所有局部慢模块。更细粒度的慢块仍应使用组件内 `<Suspense>`。
+
+## Streaming
+
+一句话定义：Streaming 是指服务端按渲染边界分段返回内容，而不是等待整个页面完全就绪后一次性输出。
+
+它解决什么问题：如果某些内容明显更慢，整页等待会把用户感知延迟拉长；Streaming 可以先把快的部分返回。
+
+什么时候用：
+
+- 页面不同区域速度差异大
+- 路由切换后希望迅速出现骨架和主体框架
+- 大型页面中存在慢数据区块
+
+常见注意点：Streaming 不是独立 API，而是和 Suspense 边界、`loading.tsx`、服务端组件一起工作的结果。
+
+## 预取
+
+一句话定义：预取是 Next.js 在用户真正点击前提前获取路由相关资源的一种优化能力。
+
+它解决什么问题：很多常见导航路径是可以预测的，如果等用户点击后再开始准备数据和路由资源，体验就会慢很多。
+
+什么时候用：
+
+- 列表进入详情
+- 导航菜单
+- 常见用户路径
+
+```tsx
+import Link from 'next/link'
+
+export default function Nav() {
+  return <Link href="/dashboard">Dashboard</Link>
+}
+```
+
+常见注意点：预取不是无限免费。真正高频、可预测路径收益最大；对大量低命中链接盲目预取，可能反而浪费资源。
+
+## 客户端导航
+
+一句话定义：客户端导航指站内路由切换时，Next.js 利用 RSC 负载、路由缓存与预取能力实现更快的页面过渡。
+
+它解决什么问题：如果每次都像第一次加载一样整页刷新，App Router 的很多性能优势就无法体现。
+
+什么时候用：
+
+- 菜单切换
+- 列表与详情之间往返
+- 多层嵌套路由中的局部切换
+
+常见注意点：客户端导航体验不只由 `Link` 决定，还和 Suspense 边界、缓存命中和路由结构本身有关。
+
+## 为什么有时页面会“先出来一半”
+
+这是 App Router 很典型的现象，其本质通常是：
+
+- 外层 layout 已经可复用
+- 当前段有 `loading.tsx`
+- 页面内部某些内容被 `<Suspense>` 包裹
+- 服务端按边界进行 Streaming
+
+因此，页面不是“渲染错位”，而是按照边界逐步呈现。
+
+## 一个更稳的等待设计顺序
+
+在真实项目里，更稳的设计顺序通常是：
+
+- 先把页面切成快慢模块
+- 路由段级反馈交给 `loading.tsx`
+- 页面内部慢块交给 `<Suspense>`
+- 高频跳转路径尽量让 `Link` 预取发挥作用
+
+这样能把等待从“整页阻塞”改造成“局部可感知、分段可见”。
+
+## 常见误区
+
+### 误区一：Streaming 就是更快 SSR
+
+它不仅是速度问题，更是“等待结构”变化的问题。
+
+### 误区二：`loading.tsx` 可以替代所有 Suspense 边界
+
+不准确。它解决的是路由段级体验，组件内部慢块仍需更细边界。
+
+### 误区三：页面出现局部 loading 说明架构混乱
+
+不准确。只要边界设计合理，局部 loading 恰恰是现代渲染体验的一部分。
+
+### 误区四：预取越多越好
+
+预取应服务高概率导航路径，而不是无差别扩大请求面。
+
+## 文末速查
+
+| 场景 | 优先想到的能力 |
+| --- | --- |
+| 路由段级加载反馈 | `loading.tsx` |
+| 页面内部慢模块 | `<Suspense>` |
+| 分段返回 HTML / RSC 负载 | Streaming |
+| 常见站内导航优化 | `Link` 预取 |
+| 页面切换更快 | 客户端导航 + Router Cache |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Next.js 的导航体验优化，核心不是“更快跳转”这四个字，而是通过边界、预取和缓存把等待拆成更合理的阶段。

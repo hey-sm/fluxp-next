@@ -1,0 +1,429 @@
+---
+title: React渲染流程
+category: react
+excerpt: 从 React 18 的并发渲染到 React 19 的增强能力，系统讲清 render、commit、Suspense、SSR 与 hydration 的流程变化。
+slug: react-rendering-process-guide
+tags: [React 18, React 19, Rendering, Suspense, Hydration]
+---
+
+{/* @format */}
+
+# React 18 与 React 19 渲染流程指南
+
+React 18 是现代 React 渲染模型的分水岭。自这一版本开始，React 的变化重点不再只是组件 API 的增量演进，而是渲染调度、更新优先级、Suspense、流式服务端渲染与 hydration 等能力在同一套并发渲染体系内被统一起来。React 19 则建立在这套体系之上，继续增强渲染链路的可用性与诊断能力，而不是重新定义底层渲染器。
+
+本文聚焦现代 React 的渲染流程本身，不展开 React 16/17 的实现历史，只在必要处说明 React 18 之前更接近同步渲染思路。
+
+## 基本术语
+
+在进入版本差异之前，先统一几个核心术语：
+
+- `render phase`：React 计算下一棵 UI 树的阶段。此阶段可以被中断、恢复、重试或丢弃。
+- `commit phase`：React 将最终计算结果一次性提交到宿主环境的阶段，例如更新浏览器 DOM。此阶段保持原子性。
+- `concurrent rendering`：并发渲染。它不意味着多个 DOM 同时被部分提交，而是指 React 在 render phase 具备更精细的调度与中断能力。
+- `batching`：批处理。多个状态更新被合并到一次渲染与提交过程，避免无意义的重复工作。
+- `Suspense`：用于声明“这部分 UI 可能需要等待异步资源”的机制。
+- `hydration`：客户端将事件、状态与 React 树重新附着到服务端已输出 HTML 上的过程。
+
+## React 18：现代渲染模型的起点
+
+React 18 的关键变化在于渲染调度模型升级，而不是单纯新增若干 Hooks。React 18 将许多此前相互独立或受限的能力，例如自动批处理、优先级更新、Suspense 与流式 SSR，统一到了现代渲染流程中。
+
+### createRoot 与 hydrateRoot
+
+React 18 的客户端入口从旧的 `ReactDOM.render` 转向 `createRoot`，服务端接管入口则转向 `hydrateRoot`。
+
+```tsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { App } from './App'
+
+const container = document.getElementById('root')
+
+if (container) {
+  createRoot(container).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+}
+```
+
+如果页面的初始 HTML 由服务端提前输出，则需要使用 `hydrateRoot`：
+
+```tsx
+import { hydrateRoot } from 'react-dom/client'
+import { App } from './App'
+
+const container = document.getElementById('root')
+
+if (container) {
+  hydrateRoot(container, <App />)
+}
+```
+
+这两个入口的意义不只是 API 替换。它们代表应用进入了新的渲染模式，后续的并发更新、Suspense 协作和 hydration 行为都建立在这一前提之上。
+
+### render phase 与 commit phase 的分工
+
+React 18 之后，理解渲染流程最重要的前提是区分 `render phase` 与 `commit phase`。
+
+- 在 `render phase` 中，React 会执行组件函数、计算新 Fiber 树、比较变更，并决定哪些内容最终需要提交。
+- 在 `commit phase` 中，React 才会真正修改 DOM、附加 ref、触发生命周期与相关副作用。
+
+这一点直接决定了现代 React 的一个基础事实：  
+组件函数已经执行，并不等于 DOM 已经更新。
+
+### 并发渲染的本质
+
+React 18 的并发渲染本质上是调度能力的增强。它允许 React 在 `render phase` 中：
+
+- 中断当前渲染
+- 处理更高优先级更新
+- 之后恢复或重试原有工作
+- 在必要时丢弃某次尚未提交的中间结果
+
+但需要特别强调：  
+并发渲染不意味着 DOM 会出现“半更新”状态。React 的 DOM 提交仍然发生在 `commit phase`，并保持原子性。
+
+因此，React 18 的正确理解不是“DOM 会被渐进式拆开提交”，而是“渲染计算过程可以被更细粒度地调度”。
+
+### 自动 batching 的适用范围扩大
+
+React 18 将自动批处理从传统的浏览器事件回调扩展到了更广泛的异步场景，例如 Promise、`setTimeout` 和原生事件监听器。
+
+```tsx
+import { useState } from 'react'
+
+export function Counter() {
+  const [count, setCount] = useState(0)
+  const [label, setLabel] = useState('idle')
+
+  async function handleClick() {
+    await Promise.resolve()
+
+    setCount((value) => value + 1)
+    setLabel('updated')
+  }
+
+  return (
+    <button onClick={handleClick}>
+      {count} / {label}
+    </button>
+  )
+}
+```
+
+在 React 18 之前，很多类似场景中的更新不会自动合并；在 React 18 中，React 会尽量把它们纳入同一批渲染过程。这意味着：
+
+- 重复渲染次数减少
+- “一次用户动作对应一次渲染提交”的直觉更稳定
+- 性能分析时需要把“批处理后的一次渲染”作为基本单位
+
+### startTransition 与更新优先级
+
+React 18 引入 `startTransition`，本质上是允许开发者明确区分紧急更新和非紧急更新。
+
+```tsx
+import { useState, useTransition } from 'react'
+
+export function SearchPage({ items }: { items: string[] }) {
+  const [keyword, setKeyword] = useState('')
+  const [result, setResult] = useState(items)
+  const [isPending, startTransition] = useTransition()
+
+  function handleChange(value: string) {
+    setKeyword(value)
+
+    startTransition(() => {
+      setResult(items.filter((item) => item.includes(value)))
+    })
+  }
+
+  return (
+    <div>
+      <input value={keyword} onChange={(e) => handleChange(e.target.value)} />
+      {isPending && <p>更新结果中...</p>}
+      <p>结果数量：{result.length}</p>
+    </div>
+  )
+}
+```
+
+这里输入框内容更新属于高优先级交互，列表筛选结果更新则可以延后调度。React 18 的渲染流程因此第一次明确体现出“同一轮用户交互下，不同更新具有不同调度优先级”。
+
+### Suspense 与流式 SSR 的关系
+
+React 18 让 Suspense 不再只是客户端异步占位语法，而是成为现代渲染链路中的关键节点。
+
+- 在客户端，它决定异步等待期间的回退 UI 如何出现
+- 在服务端，它直接参与 HTML 的分段输出与流式发送
+
+这也是为什么 React 18 之后，理解 Suspense 已经不能只停留在“一个 loading fallback 组件”层面。
+
+## React 18 渲染流程的分步说明
+
+下面用顺序化方式描述 React 18 的典型渲染流程。
+
+```text
+1. 用户事件、异步回调或外部数据变化触发更新
+2. React 将更新放入调度系统，并决定更新优先级
+3. React 进入 render phase，计算新的 Fiber 树
+4. 如遇更高优先级任务，可中断、恢复、重试或丢弃当前 render 工作
+5. React 得到最终可提交结果后，进入 commit phase
+6. DOM、ref、布局相关变更被原子提交
+7. 浏览器执行绘制
+8. layout/effect 类副作用在各自时机被执行
+```
+
+下面逐步解释每一步对开发的影响。
+
+### 1. 更新来源进入调度系统
+
+更新可能来自：
+
+- 用户点击、输入、滚动
+- Promise 完成
+- 定时器回调
+- 订阅回调
+- 服务器数据返回
+
+开发影响：  
+不要再默认把所有更新理解为“立即、同步、线性执行到结束”。React 首先会把它们纳入调度体系。
+
+### 2. React 计算优先级与任务安排
+
+React 会根据更新类型判断它属于更紧急的交互更新，还是可延后的过渡更新。
+
+开发影响：  
+如果你使用 `startTransition`，本质上是在参与调度策略，而不仅仅是在做一个语法上的包装。
+
+### 3. render phase 构建新的 Fiber 树
+
+此阶段中，组件函数会被调用，新的 UI 结构会被计算出来，但宿主环境尚未提交变更。
+
+开发影响：  
+此时可以认为“React 正在推导下一状态的 UI”，但不能认为“界面已经更新”。
+
+### 4. 必要时发生中断、恢复或重试
+
+如果出现更高优先级工作，React 可以暂停当前 render work，先处理更重要的更新，再回来继续或重新开始。
+
+开发影响：  
+这就是为什么现代 React 更强调组件和渲染逻辑的纯度。渲染过程可能多次执行、重试或被丢弃，副作用不应混入其中。
+
+### 5. commit phase 原子提交变更
+
+一旦 React 得到最终结果，就会一次性提交 DOM 变更、ref 附着和必要的宿主更新。
+
+开发影响：  
+真正读取最新 DOM、布局尺寸、滚动位置等信息，必须围绕提交后的时机进行思考。
+
+### 6. 浏览器绘制
+
+在提交之后，浏览器才能据此进行绘制。
+
+开发影响：  
+渲染、提交、绘制是不同阶段。性能问题需要区分究竟出在 React 计算、提交本身，还是浏览器布局与绘制。
+
+### 7. layout/effect 类副作用进入执行阶段
+
+提交后，布局相关与普通 effect 会按照各自时机执行。
+
+开发影响：  
+`useLayoutEffect` 与 `useEffect` 的区别，本质上与渲染流程中“提交后、绘制前/后”的时机差异直接相关。
+
+## React 19：建立在 React 18 上的增强
+
+React 19 并未重新定义渲染地基，而是在 React 18 的并发渲染体系上增强渲染链路体验。这一点非常重要：React 18 到 19 的关系是连续演进，而不是底层模型的再次断裂。
+
+### Suspense fallback 提交更快
+
+React 19 改进了 Suspense 在组件挂起时的处理顺序。当某个分支在渲染时挂起，React 会更快提交最近的 fallback，然后再继续为相关树做后续准备工作。
+
+这带来的直接影响是：
+
+- fallback 展示更及时
+- 用户等待阶段的反馈更明确
+- 同层其他工作可以在更合理的节奏中继续推进
+
+对开发者而言，这意味着 Suspense 的体验更接近“先给用户稳定反馈，再继续后续工作”，而不是等待整个分支都处理清楚才让 fallback 出现。
+
+### suspended tree 的预热思路
+
+React 19 在 Suspense 相关工作中引入了对 suspended tree 的预热思路。简单理解，它会在更合理的时机提前准备可能需要的渲染工作，而不是在 fallback 提交后完全停住。
+
+开发影响：  
+React 19 中 Suspense 相关链路更强调“用户反馈优先”和“后续渲染准备并行推进”。
+
+### hydration 错误报告更准确
+
+React 19 对 hydration mismatch 的报错质量做了显著改进。
+
+这意味着当服务端 HTML 与客户端首次渲染结果不一致时，开发者会更快定位到：
+
+- 哪一段内容不一致
+- 是文本、属性还是结构问题
+- 错误更可能来自哪一层组件
+
+这类改进虽然不改变渲染模型，但会直接改变开发者处理 hydration 问题的成本。
+
+### use 对渲染期读取数据的影响
+
+React 19 允许在渲染期通过 `use` 读取 Promise 或 Context，这会影响“渲染时取数据”的表达方式。
+
+它的意义不在于创造新渲染器，而在于：
+
+- 数据读取与 Suspense 协作更自然
+- 某些原本需要在 effect 中间接完成的读取逻辑，可以更直接地纳入渲染过程
+
+开发影响：  
+React 19 进一步强化了“渲染期数据读取”与 Suspense 的协作模式，但这仍然建立在 React 18 已有的并发渲染基础之上。
+
+### 新静态 prerender API 的意义
+
+React 19 新增了静态 prerender 相关 API，用于更精细地支持静态 HTML 预渲染场景。
+
+这类能力说明的一件事是：  
+React 19 不只是增强客户端更新流程，也在完善服务端输出与客户端接管之间的整条渲染链路。
+
+## React 18 与 React 19 的渲染流程对比
+
+| 维度                 | React 18                              | React 19                                  |
+| -------------------- | ------------------------------------- | ----------------------------------------- |
+| 渲染模型地基         | 引入现代并发渲染体系                  | 延续 React 18 的并发渲染体系              |
+| 调度特征             | 可中断、可恢复、可丢弃的 render phase | 调度模型不变，体验更成熟                  |
+| Suspense 行为        | 成为客户端与 SSR 渲染链路的重要组成   | fallback 提交更快，相关链路更顺畅         |
+| hydration 体验       | 具备现代 hydration 能力               | mismatch 诊断更准确                       |
+| 数据读取方式         | 以既有渲染与异步协作为主              | `use` 让渲染期读取 Promise/Context 更自然 |
+| SSR / prerender 支持 | 流式 SSR 成为关键能力                 | 静态 prerender API 更完善                 |
+
+结论可以压缩为一句话：  
+React 18 是现代渲染模型的分水岭，React 19 的重点是增强与完善，而不是第二次底层渲染重构。
+
+## SSR、Suspense 与 Hydration
+
+在现代 React 中，这三者不应被当作彼此孤立的主题。它们实际上构成了一条完整链路：服务端输出内容，客户端接管交互，异步资源则通过 Suspense 统一参与这一过程。
+
+### Suspense 如何改变渲染等待与回退策略
+
+在没有 Suspense 的情况下，异步等待通常只能通过手写 loading 状态分支表达。Suspense 的意义在于，它将“这部分内容暂时不可用”变成了渲染流程中的一等公民。
+
+最小示意如下：
+
+```tsx
+import { Suspense } from 'react'
+
+function Profile() {
+  throw Promise.resolve()
+}
+
+export function Page() {
+  return (
+    <Suspense fallback={<p>加载中...</p>}>
+      <Profile />
+    </Suspense>
+  )
+}
+```
+
+无论实际异步资源来自何处，Suspense 的关键作用都在于：
+
+- 明确回退 UI
+- 允许 React 统一安排等待与恢复
+- 让客户端渲染和服务端渲染共享同一类等待机制
+
+### React 18 流式 SSR 的渲染意义
+
+React 18 将流式 SSR 提升为现代服务端渲染的重要组成部分。它的意义不是单纯把 HTML 更早发出去，而是允许服务端在不同内容准备完成后分段输出。
+
+这意味着：
+
+- 用户更早看到首屏结构
+- 某些异步分支可以稍后补齐
+- Suspense 可以自然参与服务端输出节奏
+
+从渲染流程角度看，React 18 之后的服务端渲染不再只是“服务器一次性生成完整 HTML”，而是“服务端渲染、异步分支准备、客户端接管”共同组成的链路。
+
+### React 19 对 hydration 诊断和开发体验的改进
+
+hydration 的本质是：客户端不重新生成一份完全独立的页面，而是在服务端已有 HTML 基础上附着事件与状态，并继续运行 React 树。
+
+如果服务端输出与客户端首次渲染不一致，就会出现 hydration mismatch。典型来源包括：
+
+- 时间戳或随机值
+- 仅在客户端可用的环境差异
+- 条件渲染分支在服务端和客户端执行结果不同
+
+React 19 在这一环节最重要的改进不是改变 hydration 本身，而是显著提升错误定位效率。
+
+## 对开发与性能的影响
+
+现代 React 渲染流程对工程实践有几项直接影响。
+
+### 不应再以同步 DOM 更新的旧直觉理解现代渲染流程
+
+React 18 之后，组件函数执行、render phase 完成、commit phase 提交和浏览器绘制是不同阶段。把它们混为一谈，会导致对调试结果和性能现象的误读。
+
+### transition 需要与紧急更新区分
+
+输入、点击反馈、焦点变化通常应被视为更紧急更新；筛选列表、后台面板切换、大区域结果刷新可以被视为可延后更新。是否正确使用 transition，会直接影响交互流畅度。
+
+### Suspense 会影响加载阶段的用户体验与渲染顺序
+
+Suspense 不只是一个 loading 组件容器。它决定了：
+
+- 何时展示 fallback
+- 哪些内容可以先交付
+- 哪些内容需要等待
+
+这使它成为现代 React 用户体验设计的一部分，而不仅仅是渲染技巧。
+
+### hydration 问题需要从服务端输出与客户端初次渲染一致性角度分析
+
+多数 hydration 错误的根源，不是“某个组件突然坏了”，而是服务端输出与客户端首次执行结果不一致。React 19 只是让这个问题更容易定位，并没有改变其本质。
+
+### 性能分析应从调度、提交与重复渲染来源三方面判断
+
+性能问题通常至少涉及三个层面：
+
+- 调度是否合理
+- commit 是否过重
+- 重复 render 是否来自不必要更新
+
+只看“组件 render 了几次”通常不够，因为现代 React 的 render 次数并不总等价于用户可见的 DOM 提交次数。
+
+## 文末速查
+
+### render phase 与 commit phase
+
+- `render phase`：计算下一棵 UI 树，可中断、恢复、重试或丢弃
+- `commit phase`：一次性提交最终结果到宿主环境，保持原子性
+
+### React 18 与 React 19 渲染差异一句话总结
+
+- React 18：引入现代并发渲染模型
+- React 19：在 React 18 基础上增强 Suspense、hydration 与静态渲染体验
+
+### 这些术语通常在什么场景下出现
+
+| 术语            | 典型触发场景                       |
+| --------------- | ---------------------------------- |
+| batching        | 同一轮交互中连续状态更新           |
+| transition      | 输入与大列表刷新并存的场景         |
+| Suspense        | 异步资源等待与回退 UI              |
+| hydration       | 服务端 HTML 被客户端接管           |
+| render / commit | 解释组件执行、DOM 更新与副作用时机 |
+
+## 结语
+
+React 18 之后，理解 React 的关键已经不再只是“组件如何写”，而是“更新如何被调度、计算、提交并最终呈现给用户”。React 19 延续了这一地基，并进一步改善了 Suspense、hydration 和渲染期数据读取的工程体验。
+
+因此，理解 React 18 与 React 19 的渲染流程，本质上是在建立一种现代开发心智模型：
+
+- render 不等于 commit
+- 并发渲染不等于部分 DOM 提交
+- Suspense、SSR 与 hydration 属于同一条渲染链路
+- React 19 的增强建立在 React 18 的地基之上
+
+一旦这一套模型清晰，许多日常开发中的现象，例如自动 batching、transition 的效果、Suspense fallback 的时机、hydration mismatch 的来源，都会变得更容易解释。

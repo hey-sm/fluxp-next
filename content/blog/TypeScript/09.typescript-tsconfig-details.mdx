@@ -1,0 +1,309 @@
+---
+title: tsconfig
+category: ts
+excerpt: 围绕 strict、target、module、moduleResolution、jsx、paths、noUncheckedIndexedAccess 与 exactOptionalPropertyTypes，系统讲清前端项目 tsconfig 的判断框架。
+slug: typescript-tsconfig-details
+tags: [TypeScript, tsconfig, strict, moduleResolution, exactOptionalPropertyTypes]
+---
+
+{/* @format */}
+
+# TypeScript tsconfig 详解
+
+很多团队对 TypeScript 的理解停留在“文件里写类型”，却忽略了真正决定项目类型质量上限的，其实还有 `tsconfig.json`。它不只是若干编译选项的集合，而是整个项目如何理解模块、空值、路径别名、JSX 和类型严格度的总配置。
+
+从工程角度看，`tsconfig` 的价值不是“把配置项都背下来”，而是建立一套判断框架：哪些选项决定语言安全边界，哪些影响构建目标，哪些影响模块解析，哪些直接改变团队的类型习惯。
+
+官方文档主线参考：
+
+- [TSConfig Reference](https://www.typescriptlang.org/tsconfig/)
+- [strictNullChecks](https://www.typescriptlang.org/tsconfig/strictNullChecks.html)
+- [noUncheckedIndexedAccess](https://www.typescriptlang.org/tsconfig/noUncheckedIndexedAccess.html)
+- [exactOptionalPropertyTypes](https://www.typescriptlang.org/tsconfig/exactOptionalPropertyTypes.html)
+
+## 先建立一个整体认知
+
+可以把前端项目里最重要的一组 `tsconfig` 选项分成三层：
+
+- 类型安全边界：`strict`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`
+- 输出与模块边界：`target`、`module`、`moduleResolution`
+- 工程接入层：`jsx`、`paths`
+
+如果没有这个分层，很容易陷入一种常见误区：看到一堆配置名，却不知道哪些是“编译体验”，哪些是“类型语义”，哪些是“项目组织”。
+
+## strict
+
+一句话定义：`strict` 是一组严格类型检查选项的总开关，用于显著收紧 TypeScript 的默认安全边界。
+
+它解决什么问题：如果严格模式关闭，很多空值、隐式 `any`、不安全赋值都会悄悄进入项目，类型系统很快会被弱化成“有提示但不可靠”的状态。
+
+什么时候用：
+
+- 所有新项目默认建议开启
+- 旧项目迁移时作为阶段性目标
+- 希望把类型系统真正作为质量约束时
+
+```json
+{
+  "compilerOptions": {
+    "strict": true
+  }
+}
+```
+
+常见注意点：`strict` 不是某一个单点能力，而是一组策略集合。它可能会让旧项目短期内出现更多报错，但这些报错大多对应的都是真实风险，而不是“编译器太挑剔”。来源：[strict](https://www.typescriptlang.org/tsconfig/strict.html)
+
+## strict 为什么是前端项目的基线
+
+业务开发里最常见的类型问题，其实并不是高级泛型，而是这些基础风险：
+
+- 某个值可能是 `undefined`
+- 某个对象字段未检查就直接使用
+- 某个函数参数隐式变成 `any`
+- 某个分支遗漏导致类型不完整
+
+`strict` 的意义就在于把这些“默认放过”的地方收紧。真正成熟的 TypeScript 项目，不是会写很多高级类型，而是不会轻易把严格边界关掉。
+
+## target
+
+一句话定义：`target` 用于指定 TypeScript 输出 JavaScript 时对齐的语言版本。
+
+它解决什么问题：不同运行环境对语法特性的支持不同，`target` 会影响 TypeScript 生成什么样的 JavaScript 代码，以及默认包含哪些内置库类型。
+
+什么时候用：
+
+- 配合前端构建目标和浏览器兼容范围设置
+- 需要明确现代语法输出级别时
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022"
+  }
+}
+```
+
+常见注意点：`target` 不是“越低越安全”。现代前端工程通常会由构建工具进一步处理浏览器兼容问题，TypeScript 层更重要的是和你的运行环境、打包链路保持一致。来源：[target](https://www.typescriptlang.org/tsconfig/target.html)
+
+## module
+
+一句话定义：`module` 用于指定 TypeScript 如何输出模块系统语义，例如 `ESNext`、`CommonJS` 等。
+
+它解决什么问题：模块语义会影响导入导出代码的生成方式，也会影响构建工具与运行环境如何消费这些文件。
+
+什么时候用：
+
+- 需要和 bundler、Node.js 或浏览器模块环境对齐时
+- 区分 ESM 和 CommonJS 输出方式时
+
+```json
+{
+  "compilerOptions": {
+    "module": "ESNext"
+  }
+}
+```
+
+常见注意点：现代前端项目通常不会单独依赖 TypeScript 完成最终模块转换，而是与构建工具协同。因此 `module` 的选择应与构建链路保持一致，而不是脱离工程环境孤立设置。来源：[module](https://www.typescriptlang.org/tsconfig/module.html)
+
+## moduleResolution
+
+一句话定义：`moduleResolution` 决定 TypeScript 应该如何解析 `import` 路径及其对应的类型定义。
+
+它解决什么问题：即使代码运行时能找到模块，TypeScript 也必须能在编译期找到它的类型。模块解析策略不一致时，项目往往会出现“运行能过、类型找不到”或相反的问题。
+
+什么时候用：
+
+- 现代 bundler 项目
+- Node.js ESM / CJS 混合环境
+- 使用包导出字段、路径别名或类型导出时
+
+```json
+{
+  "compilerOptions": {
+    "moduleResolution": "Bundler"
+  }
+}
+```
+
+常见注意点：前端项目里，`Bundler` 或与实际运行环境一致的解析策略通常比沿用旧式 `Node` 解析更稳。模块解析错误很多时候不是代码写错，而是 `module` 与 `moduleResolution` 没有配套。来源：[moduleResolution](https://www.typescriptlang.org/tsconfig/moduleResolution.html)
+
+## jsx
+
+一句话定义：`jsx` 用于指定 TSX 文件中的 JSX 语法应如何被编译或保留。
+
+它解决什么问题：React、Preact 等框架的 TSX 写法都依赖 JSX 选项，如果配置不匹配，类型检查和构建输出都会出现问题。
+
+什么时候用：
+
+- React 项目
+- 使用 TSX 语法的组件工程
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  }
+}
+```
+
+常见注意点：`jsx` 不是样式偏好，而是和你使用的 JSX 运行时直接相关。现代 React 项目通常应使用与新 JSX transform 对齐的配置。来源：[jsx](https://www.typescriptlang.org/tsconfig/jsx.html)
+
+## paths
+
+一句话定义：`paths` 配合 `baseUrl` 或现代解析策略使用，用于为导入路径定义别名映射。
+
+它解决什么问题：随着项目变大，深层相对路径会快速损害可维护性。路径别名可以把模块引用从“目录位置”提升为“逻辑边界”。
+
+什么时候用：
+
+- 中大型前端项目
+- 公共模块、组件库、领域模型目录较多时
+
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  }
+}
+```
+
+常见注意点：`paths` 只影响 TypeScript 的解析认知，不自动保证运行时和构建工具也能识别同样的别名。必须让构建链路和测试环境同步对齐。来源：[paths](https://www.typescriptlang.org/tsconfig/paths.html)
+
+## noUncheckedIndexedAccess
+
+一句话定义：开启后，索引访问结果会自动附带 `undefined` 可能性，除非该键在类型上明确存在。
+
+它解决什么问题：对象索引和数组下标访问是很多隐藏空值错误的来源。默认情况下，TypeScript 往往会过于乐观，而这个选项会把风险显式暴露出来。
+
+什么时候用：
+
+- 配置字典、缓存表、映射表很多的项目
+- 想降低“取值成功只是侥幸”的代码风格
+
+```json
+{
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true
+  }
+}
+```
+
+```ts
+const map: Record<string, string> = {}
+const value = map['title']
+```
+
+开启后，`value` 会变成 `string | undefined`，这更符合真实运行时语义。
+
+常见注意点：这个选项会让很多“以前看似没问题”的索引访问报错，但这些报错本质上都是在提醒你：这里并没有真正保证值存在。来源：[noUncheckedIndexedAccess](https://www.typescriptlang.org/tsconfig/noUncheckedIndexedAccess.html)
+
+## exactOptionalPropertyTypes
+
+一句话定义：开启后，可选属性 `foo?: T` 会被更严格地区分为“属性可以不存在”，而不是默认近似成“属性存在但值可以是 `undefined`”。
+
+它解决什么问题：很多项目把“字段未提供”和“字段显式传 `undefined`”混为一谈，这在配置对象、patch 请求和组件 props 里很容易造成语义模糊。
+
+什么时候用：
+
+- 重视配置对象语义边界的项目
+- 对 patch / partial update 建模较多的工程
+- 希望提升可选属性准确度时
+
+```json
+{
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
+
+```ts
+type UserPatch = {
+  name?: string
+}
+```
+
+开启后，`name?: string` 更接近“可以不传”，而不是“可以传 `undefined` 作为值”。
+
+常见注意点：这个选项会改变很多团队对可选属性的旧直觉，因此启用前要先统一语义理解。它不是“更烦的严格模式”，而是把可选属性的建模从模糊状态拉回准确状态。来源：[exactOptionalPropertyTypes](https://www.typescriptlang.org/tsconfig/exactOptionalPropertyTypes.html)
+
+## 一个更稳的前端项目基线
+
+下面是一份偏现代前端工程的思路示例：
+
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
+
+这不是所有项目都必须照搬的模板，但它体现了一个清晰思路：
+
+- 严格模式是默认基线
+- 输出与解析策略跟现代构建工具对齐
+- JSX 与框架运行时一致
+- 路径别名与工程组织同步
+- 对索引访问和可选属性收紧语义
+
+## 配置时的判断顺序
+
+如果你在搭建或调整 `tsconfig`，更合理的顺序通常是：
+
+1. 先决定类型安全边界，优先确认 `strict`
+2. 再决定运行目标与模块语义，即 `target`、`module`
+3. 再让模块解析策略与构建工具一致，即 `moduleResolution`
+4. 再配置 JSX 与路径别名
+5. 最后根据项目复杂度考虑 `noUncheckedIndexedAccess` 和 `exactOptionalPropertyTypes`
+
+顺序重要，因为 `tsconfig` 不是零散开关，而是一套互相关联的工程约束。
+
+## 常见误区
+
+### 误区一：项目能跑就说明 tsconfig 没问题
+
+运行正常不等于类型配置合理。很多模块解析、空值和索引访问问题恰恰是在“能跑”的前提下被忽视的。
+
+### 误区二：关闭 `strict` 可以提高开发效率
+
+短期看似减少报错，长期会把大量问题推迟到运行时和重构阶段，整体成本更高。
+
+### 误区三：`paths` 配了就万事大吉
+
+如果 bundler、测试工具、编辑器解析没有一起对齐，路径别名只会形成新的不一致来源。
+
+### 误区四：`exactOptionalPropertyTypes` 和 `noUncheckedIndexedAccess` 只是偏执选项
+
+它们看起来更严格，但针对的恰恰是前端项目最常见的两类隐性风险：索引访问过度乐观、可选属性语义不清。
+
+## 文末速查
+
+| 关注点                                   | 优先看的配置                 |
+| ---------------------------------------- | ---------------------------- |
+| 项目整体严格度                           | `strict`                     |
+| 输出到什么 JavaScript 目标               | `target`                     |
+| 模块输出语义                             | `module`                     |
+| import 路径如何解析                      | `moduleResolution`           |
+| TSX / JSX 编译方式                       | `jsx`                        |
+| 路径别名                                 | `paths`                      |
+| 索引访问是否自动考虑 `undefined`         | `noUncheckedIndexedAccess`   |
+| 可选属性是否区分“缺失”和“显式 undefined” | `exactOptionalPropertyTypes` |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> `tsconfig` 决定的不是编译器脾气，而是整个项目对类型安全、模块边界和工程约束的基本立场。

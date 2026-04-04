@@ -1,0 +1,257 @@
+---
+title: 项目结构
+category: nextjs
+excerpt: 围绕 app、src、public、colocation、route groups、私有目录与约定式文件，系统讲清 Next.js App Router 项目的目录结构和组织方式。
+slug: nextjs-project-structure
+tags: [Next.js, App Router, Project Structure, Colocation, Route Groups]
+---
+
+{/* @format */}
+
+# Next.js 项目结构
+
+Next.js 的目录结构不是单纯的“文件摆放习惯”，而是框架运行机制的一部分。尤其在 App Router 下，文件名和目录层级直接参与路由定义、布局嵌套、错误边界、加载状态和资源组织。如果项目结构理解不清，后续路由、缓存、组件边界都会变得混乱。
+
+这篇文章只讨论现代 App Router 的项目结构，不回到 Pages Router 的文件体系。目标是建立一个工程判断框架：哪些目录是框架约定，哪些文件只是业务组织，什么应该跟路由段放在一起，什么应该抽离到共享模块中。
+
+官方文档主线参考：
+
+- [Project Structure](https://nextjs.org/docs/app/getting-started/project-structure)
+- [Layouts and Pages](https://nextjs.org/docs/app/getting-started/layouts-and-pages)
+- [Colocation](https://nextjs.org/docs/app/building-your-application/routing/colocation)
+
+## 先建立一个整体认知
+
+在 App Router 项目里，可以把结构分成三层：
+
+- 框架入口层：`app`、`public`、配置文件、`src`
+- 路由段层：由目录和特殊文件共同定义
+- 业务组织层：组件、样式、数据访问、工具函数的 colocate 或共享抽离
+
+真正需要先区分的是：哪些目录参与路由语义，哪些目录只是帮助你组织代码。
+
+## app
+
+一句话定义：`app` 是 App Router 的主入口目录，路由、布局、特殊文件和大部分框架语义都从这里展开。
+
+它解决什么问题：把路由结构、页面树、布局层级和服务端渲染入口统一在一套文件系统模型中。
+
+什么时候用：
+
+- 所有 App Router 路由
+- 路由段内的页面、布局、错误与加载文件
+- 与路由强绑定的组件和模块
+
+```text
+app/
+  layout.tsx
+  page.tsx
+  dashboard/
+    layout.tsx
+    page.tsx
+```
+
+常见注意点：`app` 不是“所有代码都必须放进去”的地方，而是路由主干所在的位置。业务共享模块不一定都应该塞进 `app`。来源：[Project Structure](https://nextjs.org/docs/app/getting-started/project-structure)
+
+## src
+
+一句话定义：`src` 是可选的顶层代码目录，用来把应用源码和根级配置文件分开。
+
+它解决什么问题：随着项目变大，把 `app`、组件和业务代码放进 `src`，可以让根目录更专注于配置和工程文件。
+
+什么时候用：
+
+- 中大型项目
+- 希望把配置文件与源码分层时
+
+```text
+src/
+  app/
+  components/
+  lib/
+```
+
+常见注意点：`src` 是组织选择，不是功能开关。使用 `src` 后，`app`、`proxy.ts` 等入口文件应一起保持在正确层级。来源：[Project Structure](https://nextjs.org/docs/app/getting-started/project-structure)
+
+## public
+
+一句话定义：`public` 用于存放按原始路径对外暴露的静态资源。
+
+它解决什么问题：某些文件不需要走模块导入和打包处理，只需要按 URL 直接访问，例如站点图标、静态图片、下载文件。
+
+什么时候用：
+
+- 固定 URL 的静态图片
+- robots.txt 之外的下载资源
+- 不需要编译处理的原始静态文件
+
+```text
+public/
+  logo.png
+  brochure.pdf
+```
+
+常见注意点：`public` 适合“路径稳定的静态资源”，不适合把所有图片都直接扔进去而忽略 `next/image` 的优化链路。
+
+## 约定式文件
+
+一句话定义：约定式文件是 Next.js 通过文件名识别其运行角色的一组特殊文件，例如 `page.tsx`、`layout.tsx`、`loading.tsx`、`error.tsx`、`route.ts`。
+
+它解决什么问题：Next.js 把大量路由和渲染配置收敛为显式文件约定，从而减少手写配置。
+
+什么时候用：
+
+- 创建页面
+- 定义共享布局
+- 设置加载态和错误边界
+- 定义 Route Handlers
+
+```text
+app/
+  page.tsx
+  layout.tsx
+  blog/
+    page.tsx
+    loading.tsx
+```
+
+常见注意点：这些文件名不是风格建议，而是框架协议。拼错文件名或放错位置，往往就意味着框架根本不会识别你的意图。
+
+## Colocation
+
+一句话定义：colocation 指的是把和某个路由段强相关的组件、样式、数据访问逻辑放在同一路由目录附近组织。
+
+它解决什么问题：如果所有组件和数据逻辑都抽到全局目录，路由段本身会失去局部边界，后续维护成本很高。
+
+什么时候用：
+
+- 页面专属组件
+- 页面专属样式
+- 路由段专属的数据获取函数
+
+```text
+app/
+  dashboard/
+    page.tsx
+    loading.tsx
+    chart.tsx
+    actions.ts
+```
+
+常见注意点：colocation 的关键不是“什么都塞一起”，而是让局部依赖就近存在。真正跨页面共享的模块仍应抽离。来源：[Colocation](https://nextjs.org/docs/app/building-your-application/routing/colocation)
+
+## 私有目录
+
+一句话定义：私有目录通常使用下划线前缀，只用于内部组织，不作为路由段暴露。
+
+它解决什么问题：虽然 App Router 默认支持 colocate，但在目录较大时，仍然需要一种显式方式区分“路由段”与“纯内部模块”。
+
+什么时候用：
+
+- 同一路由段下包含很多内部组件
+- 想避免未来与 Next.js 特殊文件冲突
+- 希望目录职责更清晰
+
+```text
+app/
+  dashboard/
+    page.tsx
+    _components/
+      chart.tsx
+      filters.tsx
+```
+
+常见注意点：私有目录是组织约定，不是强制要求。它有帮助，但不是所有项目都必须引入。
+
+## Route Groups
+
+一句话定义：Route Groups 通过 `(group)` 目录把路由按业务或布局逻辑分组，同时不影响 URL 结构。
+
+它解决什么问题：很多项目需要多个布局域或多个站点分区，但又不希望这些分区名进入最终路径。
+
+什么时候用：
+
+- 营销站和后台共存
+- 同层级多个布局分区
+- 按业务域组织路由而不污染 URL
+
+```text
+app/
+  (marketing)/
+    about/
+      page.tsx
+  (dashboard)/
+    settings/
+      page.tsx
+```
+
+常见注意点：Route Groups 不会进入 URL，因此不同 group 下的同名路由如果解析到同一路径，会产生冲突。来源：[Route Groups](https://nextjs.org/docs/app/building-your-application/routing/route-groups)
+
+## 共享模块怎么放
+
+在真实项目里，通常会有三类模块：
+
+- 路由段专属模块：优先 colocate
+- 跨路由共享 UI：放入 `components/`
+- 跨路由共享业务模块：放入 `lib/`、`features/` 或领域目录
+
+例如：
+
+```text
+src/
+  app/
+  components/
+  lib/
+  features/
+```
+
+更关键的不是目录名，而是边界稳定：
+
+- UI 共享和业务共享不要混成一个大工具箱
+- 请求层和纯工具函数不要无差别堆在一起
+- 路由段目录中只保留真正和该段强耦合的内容
+
+## 一个更稳的组织顺序
+
+如果要组织一个新的 Next.js 项目，更稳定的顺序通常是：
+
+- 先明确 `app` 中的路由主干
+- 再确定哪些逻辑应 colocate 到具体路由段
+- 再抽离跨段共享组件和业务模块
+- 目录开始膨胀后，再引入 `src`、私有目录和 Route Groups
+
+这比一开始就套复杂目录模板更可靠，因为目录结构应该服务应用边界，而不是反过来主导设计。
+
+## 常见误区
+
+### 误区一：`app` 目录里只有特殊文件才能存在
+
+不准确。`app` 支持 colocate 普通组件、样式和辅助模块，只是这些内容不会自动变成可访问路由。
+
+### 误区二：只要目录存在，就会成为一个公开路由
+
+不准确。真正成为可访问路由，仍然需要 `page.tsx` 或 `route.ts` 等约定式入口。
+
+### 误区三：Route Groups 只是好看一点的目录命名
+
+它不仅是组织手段，还会影响布局分区和路由结构设计，因此应谨慎使用。
+
+### 误区四：大型项目必须把所有内容都抽到根级共享目录
+
+过早全局化通常会破坏局部边界。App Router 的优势之一恰恰是支持更自然的就近组织。
+
+## 文末速查
+
+| 需求 | 优先想到的结构能力 |
+| --- | --- |
+| 定义页面和布局主干 | `app` |
+| 区分源码和根级配置 | `src` |
+| 暴露静态资源 URL | `public` |
+| 创建页面、布局、错误或接口入口 | 约定式文件 |
+| 页面专属模块就近组织 | colocation |
+| 区分内部组织目录 | 私有目录 |
+| 分组组织路由但不改 URL | Route Groups |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> App Router 的目录结构不是装饰层，而是 Next.js 路由、渲染与边界模型的一部分。

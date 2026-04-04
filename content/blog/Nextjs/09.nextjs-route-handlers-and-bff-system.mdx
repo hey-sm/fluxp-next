@@ -1,0 +1,251 @@
+---
+title: Route Handlers
+category: nextjs
+excerpt: 围绕 route.ts、HTTP 方法、NextRequest、NextResponse、RouteContext、CORS、Cookie 与 Header 处理，系统讲清 Next.js App Router 中 Route Handlers 的职责边界与 BFF 用法。
+slug: nextjs-route-handlers
+tags: [Next.js, Route Handlers, BFF, NextRequest, NextResponse]
+---
+
+{/* @format */}
+
+# Next.js Route Handlers
+
+App Router 并不只负责页面渲染，它也提供了原生的后端接口入口：Route Handlers。对于很多 Next.js 项目来说，这意味着你可以在同一仓库内同时承载页面层和一部分 BFF 职责，例如转发后端接口、做轻量聚合、处理表单上传、读写 Cookie 或返回 JSON。
+
+这篇文章不把 Route Handlers 写成“API Route 的换壳版”，而是放回 App Router 主线下理解：它是 `route.ts` 级别的请求处理入口，和页面路由共享同一套路由树，但职责与页面、Server Actions、Proxy 都不同。
+
+官方文档主线参考：
+
+- [Route Handlers](https://nextjs.org/docs/app/getting-started/route-handlers)
+- [route.js file convention](https://nextjs.org/docs/app/api-reference/file-conventions/route)
+- [NextRequest](https://nextjs.org/docs/app/api-reference/functions/next-request)
+- [NextResponse](https://nextjs.org/docs/app/api-reference/functions/next-response)
+
+## 先建立一个核心认知
+
+Route Handlers 的主线职责可以概括为：
+
+- 接收 HTTP 请求
+- 返回 `Response` 或 `NextResponse`
+- 处理 JSON、表单、上传、重定向或 CORS
+- 承担页面之外的接口型工作
+
+它不负责页面渲染，也不是 Server Actions 的替代品。
+
+## route.ts
+
+一句话定义：`route.ts` 是 App Router 下定义请求处理逻辑的约定式文件。
+
+它解决什么问题：让某个路由段可以直接响应 HTTP 请求，而不经过页面渲染链路。
+
+什么时候用：
+
+- 提供 JSON 接口
+- 处理 Webhook
+- 上传、下载、回调入口
+- 做轻量 BFF 聚合
+
+```ts
+export async function GET() {
+  return Response.json({ ok: true })
+}
+```
+
+常见注意点：同一路由段不能同时存在 `page.tsx` 和 `route.ts` 作为同一层入口，因为二者分别对应页面 UI 和请求处理入口，语义不同。来源：[route.js file convention](https://nextjs.org/docs/app/api-reference/file-conventions/route)
+
+## HTTP 方法
+
+一句话定义：Route Handlers 通过导出 `GET`、`POST`、`PUT`、`PATCH`、`DELETE` 等函数来响应不同 HTTP 方法。
+
+它解决什么问题：让同一路径可以按 HTTP 语义区分读取、创建、更新、删除等操作。
+
+什么时候用：
+
+- REST 风格接口
+- 表单提交和数据写入
+- 回调或 webhook 入口
+
+```ts
+export async function GET() {
+  return Response.json({ method: 'GET' })
+}
+
+export async function POST(request: Request) {
+  const body = await request.json()
+  return Response.json({ body })
+}
+```
+
+常见注意点：方法的区分应反映业务语义，而不是把所有操作都塞进 `POST` 再靠 body 字段分发。
+
+## NextRequest
+
+一句话定义：`NextRequest` 是 Next.js 对原生请求对象的扩展，提供了更方便的 URL、Cookie 等读取能力。
+
+它解决什么问题：很多处理逻辑需要更直接地读取查询参数、Cookie 和请求上下文，`NextRequest` 能简化这类操作。
+
+什么时候用：
+
+- 读取搜索参数
+- 读取 Cookie
+- 根据请求 URL 分流
+
+```ts
+import { NextRequest } from 'next/server'
+
+export async function GET(request: NextRequest) {
+  const search = request.nextUrl.searchParams.get('q')
+  return Response.json({ search })
+}
+```
+
+常见注意点：如果只需要标准请求能力，直接用原生 `Request` 也可以。`NextRequest` 的价值在于接入 Next.js 扩展能力，而不是强制替代标准 Web API。来源：[NextRequest](https://nextjs.org/docs/app/api-reference/functions/next-request)
+
+## NextResponse
+
+一句话定义：`NextResponse` 是 Next.js 对原生响应对象的扩展，支持更方便的 Cookie、重写和重定向控制。
+
+它解决什么问题：很多接口场景不仅要返回 JSON，还要设置 Header、Cookie 或进行 URL 控制，`NextResponse` 提供了更顺手的封装。
+
+什么时候用：
+
+- 设置响应 Cookie
+- 发送重定向
+- 配合 Proxy 做 rewrite
+
+```ts
+import { NextResponse } from 'next/server'
+
+export async function GET() {
+  const response = NextResponse.json({ ok: true })
+  response.cookies.set('theme', 'dark')
+  return response
+}
+```
+
+常见注意点：如果只返回普通 JSON，原生 `Response.json()` 已经足够。不要为了“看起来像 Next.js”而强行 everywhere 使用 `NextResponse`。来源：[NextResponse](https://nextjs.org/docs/app/api-reference/functions/next-response)
+
+## RouteContext
+
+一句话定义：`RouteContext` 是 Next.js 提供的类型辅助，用于为 Route Handlers 中的动态路由参数建立类型约束。
+
+它解决什么问题：动态路径参数如果没有类型边界，很容易在接口处理中出现字符串结构不清或手写类型漂移。
+
+什么时候用：
+
+- 动态 API 路径
+- 多级动态参数接口
+
+```ts
+import type { NextRequest } from 'next/server'
+
+export async function GET(
+  request: NextRequest,
+  context: RouteContext<'/api/posts/[id]'>,
+) {
+  const { id } = await context.params
+  return Response.json({ id })
+}
+```
+
+常见注意点：`RouteContext` 的价值在于把路径结构和参数类型保持一致，尤其在复杂动态接口路径下更明显。
+
+## CORS 与 Header 处理
+
+一句话定义：Route Handlers 可以直接读写 Header，因此适合处理跨域、缓存头和自定义响应头。
+
+它解决什么问题：不少 BFF 或 webhook 场景都需要精确控制响应头，而不是只返回 JSON body。
+
+什么时候用：
+
+- 外部回调入口
+- 前后端跨域调试
+- 下载、文件流或特殊缓存策略
+
+```ts
+export async function OPTIONS() {
+  return new Response(null, {
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    },
+  })
+}
+```
+
+常见注意点：CORS 只是接口暴露策略的一部分，不应在项目里到处复制粘贴同样的头配置而不做边界区分。
+
+## Cookie 与 Session 边界
+
+一句话定义：Route Handlers 可以读取和设置 Cookie，但这并不等于它们天然就是完整会话系统。
+
+它解决什么问题：登录回调、偏好保存、某些 BFF 转发场景确实需要 Cookie 操作。
+
+什么时候用：
+
+- 登录回调接口
+- 偏好持久化
+- 服务端透传或设置少量状态
+
+常见注意点：能读写 Cookie，不等于应该把完整认证系统都堆进单个 Route Handler 文件里。认证与会话仍然需要更清晰的领域设计。
+
+## BFF 适用边界
+
+Route Handlers 很适合承担轻量 BFF 职责，例如：
+
+- 聚合多个后端接口
+- 统一前端所需数据形状
+- 隐藏私有密钥和后端内部地址
+- 处理前端专属协议转换
+
+但它们不适合：
+
+- 演变成完整后端应用的替代物
+- 把复杂领域逻辑都塞进单文件路由函数
+
+更稳的做法通常是：Route Handlers 负责入口与协议，业务逻辑抽到服务层。
+
+## 一个更稳的使用顺序
+
+在真实项目里，更稳定的判断顺序通常是：
+
+- 页面渲染逻辑优先放在 Server Components
+- 数据写入主线优先评估是否适合 Server Actions
+- 只有确实需要 HTTP 接口入口时，再使用 Route Handlers
+- Route Handlers 中只保留协议处理、认证边界和响应组织
+- 把真正业务逻辑抽离为独立服务函数
+
+这样能避免接口层和页面层、动作层相互侵蚀。
+
+## 常见误区
+
+### 误区一：Route Handlers 就是 App Router 时代的 `pages/api`
+
+它们在职责上有连续性，但运行语义、文件位置和与页面路由的关系都不同，不应简单按旧习惯照搬。
+
+### 误区二：所有写操作都应该写成 Route Handlers
+
+不准确。对于页面内表单和 UI 驱动的写操作，Server Actions 往往更贴近主线。
+
+### 误区三：Route Handlers 适合承载所有后端逻辑
+
+它适合接口入口和轻量 BFF，不适合作为完整后端架构的无边界容器。
+
+### 误区四：只要用了 `NextResponse` 就更“框架正统”
+
+不准确。该用标准 `Response` 的地方保持标准 API，通常更清晰。
+
+## 文末速查
+
+| 需求 | 优先想到的能力 |
+| --- | --- |
+| 定义接口入口 | `route.ts` |
+| 按 HTTP 方法区分操作 | `GET` / `POST` / `PATCH` / `DELETE` |
+| 读取 URL、Cookie、搜索参数 | `NextRequest` |
+| 设置 Cookie、重定向、重写响应 | `NextResponse` |
+| 动态接口路径参数类型 | `RouteContext` |
+| 轻量 BFF 聚合 | Route Handlers + 服务层抽离 |
+
+如果只保留一个结论，可以记住下面这句话：
+
+> Route Handlers 的价值，不在于“Next.js 也能写接口”，而在于它为页面之外的 HTTP 边界提供了与 App Router 一致的组织方式。
