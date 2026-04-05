@@ -325,7 +325,10 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <span className="truncate text-sm font-medium">{provider.name}</span>
                         <span className="text-muted-foreground truncate text-xs">
-                          {provider.type} · {provider.models?.join(', ')}
+                          {provider.type}
+                          {provider.type === 'openai' ? ` / ${provider.api_mode}` : ''}
+                          {' · '}
+                          {provider.models?.join(', ')}
                         </span>
                       </div>
 

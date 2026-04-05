@@ -7,7 +7,9 @@ import rehypeSlug from 'rehype-slug'
 import remarkGfm from 'remark-gfm'
 import { BlogContentLayout } from '@/components/blog/BlogContentLayout'
 import { blogMdxComponents } from '@/components/blog/MdxComponents'
+import { buttonVariants } from '@/components/ui/button-variants'
 import { getAdjacentBlogDocs, getBlogDocBySegments, getBlogStaticParams } from '@/lib/blog/mdx'
+import { cn } from '@/lib/utils'
 
 export async function generateStaticParams() {
   return getBlogStaticParams()
@@ -76,39 +78,35 @@ export default async function BlogPostPage({
         </article>
 
         {(previous || next) && (
-          <nav
-            className="border-border mt-14 grid gap-4 border-t pt-8 md:grid-cols-2"
-            aria-label="章节导航"
-          >
-            {previous ? (
-              <Link
-                href={previous.href}
-                className="border-border bg-card hover:border-foreground/25 hover:bg-muted/30 flex min-h-28 flex-col justify-between rounded-2xl border p-5 text-left transition-colors"
-              >
-                <span className="text-muted-foreground inline-flex items-center gap-2 text-sm">
-                  <ChevronLeft className="size-4" />
-                  上一章
-                </span>
-                <span className="mt-4 text-base leading-6 font-medium">{previous.title}</span>
-              </Link>
-            ) : (
-              <div className="hidden md:block" />
-            )}
+          <nav className="border-border mt-14 border-t pt-8" aria-label="章节导航">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {previous ? (
+                <Link
+                  href={previous.href}
+                  className={cn(
+                    buttonVariants({ variant: 'secondary', size: 'lg' }),
+                    'max-w-full min-w-0 rounded-2xl px-5 text-base shadow-none sm:max-w-[45%]',
+                  )}
+                >
+                  <ChevronLeft data-icon="inline-start" />
+                  <span className="truncate">{previous.title}</span>
+                </Link>
+              ) : null}
 
-            {next ? (
-              <Link
-                href={next.href}
-                className="border-border bg-card hover:border-foreground/25 hover:bg-muted/30 flex min-h-28 flex-col justify-between rounded-2xl border p-5 text-left transition-colors md:items-end md:text-right"
-              >
-                <span className="text-muted-foreground inline-flex items-center gap-2 text-sm md:flex-row-reverse">
-                  <ChevronRight className="size-4" />
-                  下一章
-                </span>
-                <span className="mt-4 text-base leading-6 font-medium">{next.title}</span>
-              </Link>
-            ) : (
-              <div className="hidden md:block" />
-            )}
+              {next ? (
+                <Link
+                  href={next.href}
+                  className={cn(
+                    buttonVariants({ variant: 'secondary', size: 'lg' }),
+                    'max-w-full min-w-0 rounded-2xl px-5 text-base shadow-none sm:max-w-[45%]',
+                    !previous && 'ml-auto',
+                  )}
+                >
+                  <span className="truncate">{next.title}</span>
+                  <ChevronRight data-icon="inline-end" />
+                </Link>
+              ) : null}
+            </div>
           </nav>
         )}
       </main>

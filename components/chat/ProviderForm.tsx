@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { normalizeProviderApiMode, type ProviderApiMode, type ProviderType } from '@/lib/provider-config'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +24,8 @@ import { FlaskConical } from 'lucide-react'
 
 export type ProviderFormData = {
   name: string
-  type: 'claude' | 'openai'
+  type: ProviderType
+  api_mode: ProviderApiMode
   base_url: string
   api_key: string
   models: string[]
@@ -41,6 +43,7 @@ type Props = {
 const empty: ProviderFormData = {
   name: '',
   type: 'openai',
+  api_mode: 'responses',
   base_url: '',
   api_key: '',
   models: [],
@@ -71,7 +74,12 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
       .split(/[,\n]/)
       .map((s) => s.trim())
       .filter(Boolean)
-    const payload = { ...form, models, default_model: models[0] ?? '' }
+    const payload = {
+      ...form,
+      api_mode: normalizeProviderApiMode(form.type, form.api_mode),
+      models,
+      default_model: models[0] ?? '',
+    }
     if (!payload.api_key) delete (payload as any).api_key
     return payload
   }
@@ -94,6 +102,7 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
         ? { id: initial.id }
         : {
             type: payload.type,
+            api_mode: payload.api_mode,
             base_url: payload.base_url,
             api_key: payload.api_key,
             models: payload.models,
@@ -107,7 +116,7 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
       if (!res.ok || json.error) {
         toast.error(`连接失败: ${json.error}`)
       } else {
-        toast.success(`连接成功，回复: ${json.reply}`)
+        toast.success(`连接成功（${json.apiMode}），回复: ${json.reply}`)
       }
     } catch {
       toast.error('请求异常')
@@ -135,7 +144,7 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
             <Label>类型</Label>
             <Select
               value={form.type}
-              onValueChange={(v: string | null) => v && set('type', v as 'claude' | 'openai')}
+              onValueChange={(v: string | null) => v && set('type', v as ProviderType)}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -146,6 +155,27 @@ export function ProviderForm({ open, initial, onClose, onSave }: Props) {
               </SelectContent>
             </Select>
           </div>
+          {form.type === 'openai' ? (
+            <div className="flex flex-col gap-1.5">
+              <Label>API 模式</Label>
+              <Select
+                value={form.api_mode}
+                onValueChange={(v: string | null) => v && set('api_mode', v as ProviderApiMode)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="responses">Responses API</SelectItem>
+                  <SelectItem value="chat">Chat Completions API</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-muted-foreground text-xs">
+                `responses` 适用于默认 OpenAI Responses 链路，`chat` 适用于只兼容
+                `/chat/completions` 的 OpenAI 兼容接口。
+              </p>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-1.5">
             <Label>Base URL</Label>
             <Input

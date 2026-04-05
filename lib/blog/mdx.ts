@@ -284,6 +284,30 @@ function buildNavigationTree(docs: InternalDoc[]) {
   return serialize(root)
 }
 
+function flattenLeafDocsFromNavigation(
+  navigation: BlogNavItem[],
+  docsByHref: Map<string, InternalDoc>,
+): InternalDoc[] {
+  const orderedDocs: InternalDoc[] = []
+
+  function walk(items: BlogNavItem[]) {
+    items.forEach((item) => {
+      if (item.isGroup) {
+        walk(item.children)
+        return
+      }
+
+      const doc = docsByHref.get(item.href)
+      if (doc) {
+        orderedDocs.push(doc)
+      }
+    })
+  }
+
+  walk(navigation)
+  return orderedDocs
+}
+
 const getBlogIndex = cache(() => {
   const docs = listContentFiles(BLOG_DIR)
     .map(readBlogFile)
@@ -322,12 +346,15 @@ const getBlogIndex = cache(() => {
 
   const docsByHref = new Map(docs.map((doc) => [doc.href, doc]))
   const docsBySegments = new Map(docs.map((doc) => [doc.segments.join('/'), doc]))
+  const navigation = buildNavigationTree(docs)
+  const orderedDocsForNavigation = flattenLeafDocsFromNavigation(navigation, docsByHref)
 
   return {
     docs,
     docsByHref,
     docsBySegments,
-    navigation: buildNavigationTree(docs),
+    navigation,
+    orderedDocsForNavigation,
   }
 })
 
@@ -347,7 +374,7 @@ export function getBlogDocBySegments(segments: string[]): BlogDoc | null {
 }
 
 export function getAdjacentBlogDocs(segments: string[]): AdjacentBlogDocs {
-  const docs = getBlogIndex().docs
+  const docs = getBlogIndex().orderedDocsForNavigation
   const key = segments.join('/')
   const currentIndex = docs.findIndex((doc) => doc.segments.join('/') === key)
 

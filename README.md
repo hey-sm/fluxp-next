@@ -694,12 +694,20 @@ create table if not exists providers (
   type text not null,
   base_url text,
   api_key text not null,
+  api_mode text not null default 'responses' check (api_mode in ('responses', 'chat')),
   models text[] not null default '{}',
   default_model text,
   enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+```
+
+如果你已经有现成的 `providers` 表，至少需要补上这条迁移：
+
+```sql
+alter table providers
+add column if not exists api_mode text not null default 'responses';
 ```
 
 如果你已经有自己的表结构，也可以按当前接口字段自行调整。

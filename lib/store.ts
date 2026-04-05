@@ -1,10 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { ProviderApiMode, ProviderType } from '@/lib/provider-config'
 
 type Provider = {
   id: string
   name: string
-  type: 'claude' | 'openai'
+  type: ProviderType
+  api_mode: ProviderApiMode
   models: string[]
   default_model: string
   enabled: boolean

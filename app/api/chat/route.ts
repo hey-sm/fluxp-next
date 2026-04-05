@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     })
   }
 
-  const { provider, languageModel } = providerResult
+  const { provider, languageModel, apiMode } = providerResult
   const messages = await convertToModelMessages(rawMessages as UIMessage[])
   const zhSegmenter = new Intl.Segmenter('zh', { granularity: 'word' })
   const system =
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
         ].join('\n')
       : undefined
 
-  console.log('[chat] using provider:', provider.id, provider.type, provider.base_url)
+  console.log('[chat] using provider:', provider.id, provider.type, provider.base_url, apiMode)
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
