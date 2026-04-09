@@ -9,14 +9,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ChevronDown } from 'lucide-react'
 import { useStore } from '@/lib/store'
-import { useEffect, useRef, useState } from 'react'
-
-type ProviderPublic = {
-  id: string
-  name: string
-  type: string
-  models: string[]
-}
+import { useEffect } from 'react'
+import { useProviderCatalog } from '@/lib/provider-client'
 
 type Props = {
   model: string
@@ -25,30 +19,22 @@ type Props = {
 
 export function ModelSelector({ model, onChange }: Props) {
   const { activeProviderId } = useStore()
-  const [providers, setProviders] = useState<ProviderPublic[]>([])
-  const modelRef = useRef(model)
-  const onChangeRef = useRef(onChange)
-  modelRef.current = model
-  onChangeRef.current = onChange
+  const { providers, loading } = useProviderCatalog(false)
 
   useEffect(() => {
-    fetch('/api/providers')
-      .then((response) => response.json())
-      .then((data: ProviderPublic[]) => {
-        setProviders(data)
+    if (!activeProviderId) {
+      return
+    }
 
-        if (!activeProviderId) return
+    const provider = providers.find((item) => item.id === activeProviderId)
+    if (!provider?.models?.length) {
+      return
+    }
 
-        const provider = data.find((item) => item.id === activeProviderId)
-        const currentModel = modelRef.current
-        if (
-          provider?.models?.length &&
-          (!currentModel || !provider.models.includes(currentModel))
-        ) {
-          onChangeRef.current(provider.models[0])
-        }
-      })
-  }, [activeProviderId])
+    if (!model || !provider.models.includes(model)) {
+      onChange(provider.models[0])
+    }
+  }, [activeProviderId, model, onChange, providers])
 
   const activeProvider = providers.find((provider) => provider.id === activeProviderId)
   const models = activeProvider?.models ?? []
@@ -56,6 +42,10 @@ export function ModelSelector({ model, onChange }: Props) {
 
   if (!activeProviderId) {
     return <span className="text-muted-foreground text-xs">请先选择服务商</span>
+  }
+
+  if (loading && providers.length === 0) {
+    return <span className="text-muted-foreground text-xs">加载模型中...</span>
   }
 
   return (

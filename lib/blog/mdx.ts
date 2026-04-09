@@ -16,6 +16,8 @@ const ROOT_SECTION_TITLE = 'General'
 const CONTENT_FILE_PATTERN = /\.(md|mdx)$/iu
 const IGNORED_DIRECTORIES = new Set(['assets'])
 
+export type BlogContentFormat = 'md' | 'mdx'
+
 export type BlogHeading = {
   id: string
   text: string
@@ -35,6 +37,7 @@ export type BlogDocMeta = {
 export type BlogDoc = BlogDocMeta & {
   content: string
   headings: BlogHeading[]
+  format: BlogContentFormat
 }
 
 export type AdjacentBlogDocs = {
@@ -82,6 +85,10 @@ function joinBlogHref(segments: string[]) {
 
 function cleanDisplayName(value: string) {
   return value.replace(CONTENT_FILE_PATTERN, '').trim()
+}
+
+function getBlogContentFormat(filePath: string): BlogContentFormat {
+  return path.extname(filePath).toLowerCase() === '.mdx' ? 'mdx' : 'md'
 }
 
 function stripSortPrefix(value: string) {
@@ -171,8 +178,14 @@ function listContentFiles(directory: string): string[] {
   })
 }
 
-function extractHeadings(content: string): BlogHeading[] {
-  const tree = unified().use(remarkParse).use(remarkMdx).parse(content)
+function extractHeadings(content: string, format: BlogContentFormat): BlogHeading[] {
+  const processor = unified().use(remarkParse)
+
+  if (format === 'mdx') {
+    processor.use(remarkMdx)
+  }
+
+  const tree = processor.parse(content)
   const slugger = new GithubSlugger()
   const headings: BlogHeading[] = []
 
@@ -199,6 +212,7 @@ function extractHeadings(content: string): BlogHeading[] {
 function readBlogFile(filePath: string): InternalDoc {
   const rawFile = fs.readFileSync(filePath, 'utf8')
   const { data, content } = matter(rawFile)
+  const format = getBlogContentFormat(filePath)
   const relativePath = path.relative(BLOG_DIR, filePath)
   const relativeSegments = relativePath.split(path.sep)
   const fileName = relativeSegments.at(-1) ?? ''
@@ -220,7 +234,8 @@ function readBlogFile(filePath: string): InternalDoc {
       ? data.tags.filter((tag): tag is string => typeof tag === 'string')
       : undefined,
     content,
-    headings: extractHeadings(content),
+    headings: extractHeadings(content, format),
+    format,
     sortName: fileStem,
     rawSegments: [...directorySegments, fileStem],
     rawFileName: fileStem,

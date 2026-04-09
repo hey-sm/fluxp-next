@@ -58,6 +58,7 @@ export default async function BlogPostPage({
             components={blogMdxComponents}
             options={{
               mdxOptions: {
+                format: doc.format,
                 remarkPlugins: [remarkGfm],
                 rehypePlugins: [
                   rehypeSlug,

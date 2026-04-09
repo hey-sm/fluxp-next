@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import {
   Dialog,
@@ -13,13 +13,18 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ProviderForm, type ProviderFormData } from '@/components/chat/ProviderForm'
+import {
+  loadProviderCatalog,
+  type ProviderListItem,
+  useProviderCatalog,
+} from '@/lib/provider-client'
 import { createClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client'
 import { useStore } from '@/lib/store'
 import { LogOut, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { User } from '@supabase/supabase-js'
 
-type Provider = ProviderFormData & { id: string }
+type EditableProvider = Partial<ProviderFormData> & { id: string }
 type ProviderTab = 'claude' | 'openai'
 
 type Props = {
@@ -56,12 +61,34 @@ function isAdminUser(user: User | null) {
   return user?.app_metadata?.role === 'admin'
 }
 
+async function getErrorMessage(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => null)) as unknown
+
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'error' in payload &&
+    typeof payload.error === 'string'
+  ) {
+    return payload.error
+  }
+
+  return fallback
+}
+
+function toEditableProvider(provider: ProviderListItem): EditableProvider {
+  return {
+    ...provider,
+    base_url: provider.base_url ?? '',
+    api_key: '',
+  }
+}
+
 export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
   const [user, setUser] = useState<User | null>(null)
-  const [providers, setProviders] = useState<Provider[]>([])
   const [providerTab, setProviderTab] = useState<ProviderTab>('openai')
   const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState<Provider | undefined>(undefined)
+  const [editing, setEditing] = useState<EditableProvider | undefined>(undefined)
   const [loginDialogOpen, setLoginDialogOpen] = useState(false)
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -69,17 +96,7 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
   const { activeProviderId, setActiveProviderId } = useStore()
   const authAvailable = hasSupabaseBrowserEnv()
   const isAdmin = isAdminUser(user)
-
-  const loadProviders = useCallback(async (includeAll: boolean) => {
-    try {
-      const res = await fetch(includeAll ? '/api/providers?all=1' : '/api/providers')
-      const data = await res.json()
-      setProviders(Array.isArray(data) ? data : [])
-    } catch (error) {
-      console.error('[providers] load failed:', error)
-      setProviders([])
-    }
-  }, [])
+  const { providers, loading: providersLoading } = useProviderCatalog(isAdmin)
 
   useEffect(() => {
     if (authAvailable) {
@@ -90,7 +107,7 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
   }, [authAvailable])
 
   useEffect(() => {
-    if (!open || !authAvailable) {
+    if (!authAvailable) {
       return
     }
 
@@ -99,24 +116,27 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
       return
     }
 
-    supabase.auth.getUser().then(({ data }) => setUser(data.user))
+    let cancelled = false
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!cancelled) {
+        setUser(data.user)
+      }
+    })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null)
+      if (!cancelled) {
+        setUser(session?.user ?? null)
+      }
     })
 
-    return () => subscription.unsubscribe()
-  }, [authAvailable, open])
-
-  useEffect(() => {
-    if (!open) {
-      return
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
     }
-
-    void loadProviders(isAdmin)
-  }, [isAdmin, loadProviders, open])
+  }, [authAvailable])
 
   async function handleLogin(event: React.FormEvent) {
     event.preventDefault()
@@ -135,13 +155,13 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
     setLoginLoading(true)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { error: authError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password: loginPassword,
       })
 
-      if (error) {
-        toast.error(error.message)
+      if (authError) {
+        toast.error(authError.message)
         return
       }
 
@@ -150,7 +170,9 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
       setLoginDialogOpen(false)
       setLoginPassword('')
       toast.success(isAdminUser(nextUser) ? '登录成功' : '已登录，但当前账号没有管理权限')
-      void loadProviders(isAdminUser(nextUser))
+      void loadProviderCatalog(isAdminUser(nextUser), { force: true }).catch((loadError) => {
+        console.error('[providers] load failed after login:', loadError)
+      })
     } finally {
       setLoginLoading(false)
     }
@@ -165,7 +187,9 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
 
     await supabase.auth.signOut()
     setUser(null)
-    void loadProviders(false)
+    void loadProviderCatalog(false, { force: true }).catch((error) => {
+      console.error('[providers] load failed after logout:', error)
+    })
     toast.success('已退出登录')
   }
 
@@ -175,21 +199,36 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
       return
     }
 
-    if (id) {
-      await fetch(`/api/providers/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      })
-    } else {
-      await fetch('/api/providers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      })
-    }
+    try {
+      if (id) {
+        const response = await fetch(`/api/providers/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        })
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response, '更新供应商失败'))
+        }
+      } else {
+        const response = await fetch('/api/providers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        })
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response, '新增供应商失败'))
+        }
+      }
 
-    void loadProviders(true)
+      await Promise.all([
+        loadProviderCatalog(true, { force: true }),
+        loadProviderCatalog(false, { force: true }),
+      ])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存供应商失败'
+      toast.error(message)
+      throw error
+    }
   }
 
   async function handleDeleteProvider(id: string) {
@@ -202,8 +241,19 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
       return
     }
 
-    await fetch(`/api/providers/${id}`, { method: 'DELETE' })
-    void loadProviders(true)
+    try {
+      const response = await fetch(`/api/providers/${id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response, '删除供应商失败'))
+      }
+
+      await Promise.all([
+        loadProviderCatalog(true, { force: true }),
+        loadProviderCatalog(false, { force: true }),
+      ])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除供应商失败')
+    }
   }
 
   function handleProviderCardKeyDown(
@@ -308,6 +358,10 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
 
             <div className="flex-1 overflow-y-auto px-6 py-4">
               <div className="flex flex-col gap-3">
+                {providersLoading && providers.length === 0 ? (
+                  <p className="text-muted-foreground py-8 text-center text-sm">加载供应商中...</p>
+                ) : null}
+
                 {visibleProviders.map((provider) => (
                   <div
                     key={provider.id}
@@ -338,7 +392,7 @@ export function ProviderSettingsSheet({ open, onOpenChange }: Props) {
                             className="hover:bg-muted rounded p-1"
                             onClick={(event) => {
                               event.stopPropagation()
-                              setEditing(provider)
+                              setEditing(toEditableProvider(provider))
                               setFormOpen(true)
                             }}
                           >
