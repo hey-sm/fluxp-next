@@ -25,6 +25,7 @@ import {
   getMessagesAfterSummaryBoundary,
 } from '@/lib/chat/conversation-memory'
 import { createTextMessageParts, getMessageText } from '@/lib/message-content'
+import { prefetchProviderCatalog } from '@/lib/provider-client'
 
 const BOTTOM_OFFSET_PX = 80
 const PROGRAMMATIC_SCROLL_MS = 500
@@ -53,6 +54,10 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
   const initialPendingMessageRef = useRef<PendingConversationMessage | null>(null)
 
   isPinnedToBottomRef.current = isPinnedToBottom
+
+  useEffect(() => {
+    prefetchProviderCatalog(false)
+  }, [])
 
   useLayoutEffect(() => {
     const nextPendingMessage = getPendingMessage(id)

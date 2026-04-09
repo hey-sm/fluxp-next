@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/lib/store'
 import { ModelSelector } from '@/components/chat/ModelSelector'
@@ -8,11 +9,16 @@ import { MessageInput } from '@/components/chat/MessageInput'
 import { createConversation } from '@/lib/db/conversations'
 import { createId } from '@/lib/id'
 import { setPendingMessage } from '@/lib/pending-message'
+import { prefetchProviderCatalog } from '@/lib/provider-client'
 
 export default function ChatPage() {
   const router = useRouter()
   const { activeProviderId, activeModel, setActiveModel } = useStore()
   const model = activeModel
+
+  useEffect(() => {
+    prefetchProviderCatalog(false)
+  }, [])
 
   function handleSend(content: string) {
     if (!activeProviderId || !model) return
