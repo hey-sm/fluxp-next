@@ -1,9 +1,9 @@
 import { HomeTopNav } from '@/components/home/home-top-nav'
 import { HomeWeatherStatus } from '@/components/home/home-weather-status'
-import { HomeRetroTv } from '@/components/home/home-retro-tv'
 import { LightRays } from '@/components/ui/light-rays'
 import { PixelHeading } from '@/components/ui/pixel-heading-character'
 import { fetchWeatherFromIp } from '@/lib/weather'
+import SplitText from '@/components/ui/SplitText'
 
 export default async function Home() {
   const initialWeather = await fetchWeatherFromIp().catch(() => null)
@@ -38,7 +38,16 @@ export default async function Home() {
         </section>
 
         <section className="mt-auto flex justify-center pt-16 pb-6 sm:pt-20">
-          <HomeRetroTv />
+          <SplitText
+            text="悟已往之不谏，知来者之可追。实迷途其未远，觉今是而昨非。"
+            delay={50}
+            duration={1.25}
+            ease="power3.out"
+            splitType="chars"
+            from={{ opacity: 0, y: 40 }}
+            to={{ opacity: 1, y: 0 }}
+            threshold={0.1}
+          />
         </section>
       </main>
     </div>
