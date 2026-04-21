@@ -1,7 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { normalizeProviderApiMode, type ProviderApiMode, type ProviderType } from '@/lib/provider-config'
+import {
+  normalizeProviderApiMode,
+  type ProviderApiMode,
+  type ProviderType,
+} from '@/lib/provider-config'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

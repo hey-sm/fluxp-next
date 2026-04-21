@@ -97,10 +97,7 @@ async function readProviderResponse(response: Response) {
   return Array.isArray(payload) ? (payload as ProviderListItem[]) : []
 }
 
-export async function loadProviderCatalog(
-  includeAll = false,
-  options?: { force?: boolean },
-) {
+export async function loadProviderCatalog(includeAll = false, options?: { force?: boolean }) {
   const force = options?.force ?? false
   const cacheKey = getCacheKey(includeAll)
   const state = useProviderCatalogStore.getState()

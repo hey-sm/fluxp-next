@@ -20,7 +20,5 @@ export function normalizeProviderModels(models: unknown): string[] {
     return []
   }
 
-  return models
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter(Boolean)
+  return models.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean)
 }

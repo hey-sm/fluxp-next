@@ -139,10 +139,7 @@ export async function GET() {
 ```ts
 import type { NextRequest } from 'next/server'
 
-export async function GET(
-  request: NextRequest,
-  context: RouteContext<'/api/posts/[id]'>,
-) {
+export async function GET(request: NextRequest, context: RouteContext<'/api/posts/[id]'>) {
   const { id } = await context.params
   return Response.json({ id })
 }
@@ -237,14 +234,14 @@ Route Handlers 很适合承担轻量 BFF 职责，例如：
 
 ## 文末速查
 
-| 需求 | 优先想到的能力 |
-| --- | --- |
-| 定义接口入口 | `route.ts` |
-| 按 HTTP 方法区分操作 | `GET` / `POST` / `PATCH` / `DELETE` |
-| 读取 URL、Cookie、搜索参数 | `NextRequest` |
-| 设置 Cookie、重定向、重写响应 | `NextResponse` |
-| 动态接口路径参数类型 | `RouteContext` |
-| 轻量 BFF 聚合 | Route Handlers + 服务层抽离 |
+| 需求                          | 优先想到的能力                      |
+| ----------------------------- | ----------------------------------- |
+| 定义接口入口                  | `route.ts`                          |
+| 按 HTTP 方法区分操作          | `GET` / `POST` / `PATCH` / `DELETE` |
+| 读取 URL、Cookie、搜索参数    | `NextRequest`                       |
+| 设置 Cookie、重定向、重写响应 | `NextResponse`                      |
+| 动态接口路径参数类型          | `RouteContext`                      |
+| 轻量 BFF 聚合                 | Route Handlers + 服务层抽离         |
 
 如果只保留一个结论，可以记住下面这句话：
 

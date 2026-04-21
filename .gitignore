@@ -37,11 +37,14 @@ yarn-error.log*
 # vercel
 .vercel
 
+
+
 # local agent / editor files
 .agents/
 .claude/
 .vscode/
 .idea/
+.obsidian/
 project-plan.md
 skills-lock.json
 

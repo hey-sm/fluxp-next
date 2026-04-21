@@ -63,11 +63,7 @@ export default function Page() {
 - 多页共享筛选区或页眉页脚
 
 ```tsx
-export default function Layout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <section>
       <aside>Sidebar</aside>
@@ -91,11 +87,7 @@ export default function Layout({
 - 希望每次导航都重新触发某些挂载逻辑
 
 ```tsx
-export default function Template({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function Template({ children }: { children: React.ReactNode }) {
   return <div className="page-shell">{children}</div>
 }
 ```
@@ -252,16 +244,16 @@ export default function Default() {
 
 ## 文末速查
 
-| 需求 | 优先想到的特殊文件 |
-| --- | --- |
-| 创建可访问页面 | `page.tsx` |
-| 建立共享外壳并保留状态 | `layout.tsx` |
-| 建立共享外壳但不保留实例状态 | `template.tsx` |
-| 提供路由段加载态 | `loading.tsx` |
-| 建立局部错误边界 | `error.tsx` |
-| 建立全局兜底错误边界 | `global-error.tsx` |
-| 呈现 404 语义 | `not-found.tsx` |
-| 并行路由槽位默认内容 | `default.tsx` |
+| 需求                         | 优先想到的特殊文件 |
+| ---------------------------- | ------------------ |
+| 创建可访问页面               | `page.tsx`         |
+| 建立共享外壳并保留状态       | `layout.tsx`       |
+| 建立共享外壳但不保留实例状态 | `template.tsx`     |
+| 提供路由段加载态             | `loading.tsx`      |
+| 建立局部错误边界             | `error.tsx`        |
+| 建立全局兜底错误边界         | `global-error.tsx` |
+| 呈现 404 语义                | `not-found.tsx`    |
+| 并行路由槽位默认内容         | `default.tsx`      |
 
 如果只保留一个结论，可以记住下面这句话：
 

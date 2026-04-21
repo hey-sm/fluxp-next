@@ -241,15 +241,15 @@ export default function Page() {
 
 ## 文末速查
 
-| 需求 | 优先想到的做法 |
-| --- | --- |
-| 页面首次内容获取 | Server Component 中 `fetch` |
-| 同一树内重复请求同一资源 | 依赖 `fetch` memoization |
-| 多个独立数据源 | 并行获取 |
-| 请求存在依赖链 | 串行获取 |
-| 服务端内部数据 | 数据库 / ORM 直连 |
-| 某块慢数据不应阻塞全页 | Suspense + Streaming |
-| 路由段级加载体验 | `loading.tsx` |
+| 需求                     | 优先想到的做法              |
+| ------------------------ | --------------------------- |
+| 页面首次内容获取         | Server Component 中 `fetch` |
+| 同一树内重复请求同一资源 | 依赖 `fetch` memoization    |
+| 多个独立数据源           | 并行获取                    |
+| 请求存在依赖链           | 串行获取                    |
+| 服务端内部数据           | 数据库 / ORM 直连           |
+| 某块慢数据不应阻塞全页   | Suspense + Streaming        |
+| 路由段级加载体验         | `loading.tsx`               |
 
 如果只保留一个结论，可以记住下面这句话：
 

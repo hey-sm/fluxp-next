@@ -238,12 +238,18 @@ export async function createPost(formData: FormData) {
 import { useOptimistic } from 'react'
 
 export function TodoList({ items }: { items: string[] }) {
-  const [optimisticItems, addOptimisticItem] = useOptimistic(
-    items,
-    (state, newItem: string) => [...state, newItem],
-  )
+  const [optimisticItems, addOptimisticItem] = useOptimistic(items, (state, newItem: string) => [
+    ...state,
+    newItem,
+  ])
 
-  return <ul>{optimisticItems.map((item) => <li key={item}>{item}</li>)}</ul>
+  return (
+    <ul>
+      {optimisticItems.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  )
 }
 ```
 
@@ -281,15 +287,15 @@ export function TodoList({ items }: { items: string[] }) {
 
 ## 文末速查
 
-| 场景 | 优先想到的能力 |
-| --- | --- |
-| 服务端定义写操作入口 | `'use server'` |
-| 标准表单提交 | `<form action={action}>` |
-| 客户端按钮触发服务端写操作 | `formAction` 或导入 Action |
-| 表单校验失败反馈 | 显式返回 expected error |
-| 更新后刷新页面数据 | `revalidatePath` / `revalidateTag` / `updateTag` |
-| 写完后跳转 | `redirect()` |
-| 提升提交即时反馈 | 乐观更新 |
+| 场景                       | 优先想到的能力                                   |
+| -------------------------- | ------------------------------------------------ |
+| 服务端定义写操作入口       | `'use server'`                                   |
+| 标准表单提交               | `<form action={action}>`                         |
+| 客户端按钮触发服务端写操作 | `formAction` 或导入 Action                       |
+| 表单校验失败反馈           | 显式返回 expected error                          |
+| 更新后刷新页面数据         | `revalidatePath` / `revalidateTag` / `updateTag` |
+| 写完后跳转                 | `redirect()`                                     |
+| 提升提交即时反馈           | 乐观更新                                         |
 
 如果只保留一个结论，可以记住下面这句话：
 

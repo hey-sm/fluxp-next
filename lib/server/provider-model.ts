@@ -1,5 +1,9 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { normalizeProviderApiMode, type ProviderApiMode, type ProviderType } from '@/lib/provider-config'
+import {
+  normalizeProviderApiMode,
+  type ProviderApiMode,
+  type ProviderType,
+} from '@/lib/provider-config'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 
@@ -13,7 +17,9 @@ export type ProviderRecord = {
 
 type ProviderLanguageModelResult = {
   provider: ProviderRecord
-  languageModel: ReturnType<ReturnType<typeof createAnthropic>> | ReturnType<ReturnType<typeof createOpenAI>>
+  languageModel:
+    | ReturnType<ReturnType<typeof createAnthropic>>
+    | ReturnType<ReturnType<typeof createOpenAI>>
   apiMode: 'anthropic' | 'responses' | 'chat'
 }
 

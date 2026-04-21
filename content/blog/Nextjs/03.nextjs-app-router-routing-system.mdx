@@ -96,11 +96,7 @@ app/
 ```
 
 ```tsx
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ slug: string }>
-}) {
+export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
   return <div>{slug}</div>
 }
@@ -258,15 +254,15 @@ export default function Nav() {
 
 ## 文末速查
 
-| 需求 | 优先想到的路由能力 |
-| --- | --- |
-| 定义普通页面路径 | route segment + `page.tsx` |
-| 建立多层路径关系 | 嵌套路由 |
-| 从 URL 读取标识 | 动态路由 |
-| 组织分区但不改 URL | Route Groups |
-| 一个页面并行承载多个独立槽位 | Parallel Routes |
-| 在当前上下文中展示另一路由 | Intercepting Routes |
-| 站内高性能导航 | `Link` + 预取主线 |
+| 需求                         | 优先想到的路由能力         |
+| ---------------------------- | -------------------------- |
+| 定义普通页面路径             | route segment + `page.tsx` |
+| 建立多层路径关系             | 嵌套路由                   |
+| 从 URL 读取标识              | 动态路由                   |
+| 组织分区但不改 URL           | Route Groups               |
+| 一个页面并行承载多个独立槽位 | Parallel Routes            |
+| 在当前上下文中展示另一路由   | Intercepting Routes        |
+| 站内高性能导航               | `Link` + 预取主线          |
 
 如果只保留一个结论，可以记住下面这句话：
 

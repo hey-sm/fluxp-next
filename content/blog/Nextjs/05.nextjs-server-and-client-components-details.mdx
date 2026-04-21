@@ -188,11 +188,7 @@ export function LikeButton({ likes }: { likes: number }) {
 ```tsx
 import { Providers } from './providers'
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
       <body>
@@ -237,14 +233,14 @@ export default function RootLayout({
 
 ## 文末速查
 
-| 场景 | 优先想到的组件边界 |
-| --- | --- |
-| 读取数据并输出页面 | Server Component |
-| 事件处理和本地状态 | Client Component |
-| 浏览器 API | Client Component |
-| 共享外壳但尽量减小包体 | 外层 Server，内层 Client |
-| Provider 接入 | 小型客户端 Providers 包裹服务端布局 |
-| 跨边界触发服务端写操作 | Server Actions |
+| 场景                   | 优先想到的组件边界                  |
+| ---------------------- | ----------------------------------- |
+| 读取数据并输出页面     | Server Component                    |
+| 事件处理和本地状态     | Client Component                    |
+| 浏览器 API             | Client Component                    |
+| 共享外壳但尽量减小包体 | 外层 Server，内层 Client            |
+| Provider 接入          | 小型客户端 Providers 包裹服务端布局 |
+| 跨边界触发服务端写操作 | Server Actions                      |
 
 如果只保留一个结论，可以记住下面这句话：
 

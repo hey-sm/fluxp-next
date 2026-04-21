@@ -48,15 +48,7 @@ tags: [Next.js, Image, Font, Script, CSS Modules]
 import Image from 'next/image'
 
 export default function Hero() {
-  return (
-    <Image
-      src="/hero.png"
-      alt="Hero"
-      width={1280}
-      height={720}
-      priority
-    />
-  )
+  return <Image src="/hero.png" alt="Hero" width={1280} height={720} priority />
 }
 ```
 
@@ -101,11 +93,7 @@ const geist = Geist({
   subsets: ['latin'],
 })
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" className={geist.className}>
       <body>{children}</body>
@@ -132,12 +120,7 @@ export default function RootLayout({
 import Script from 'next/script'
 
 export default function ThirdParty() {
-  return (
-    <Script
-      src="https://example.com/sdk.js"
-      strategy="afterInteractive"
-    />
-  )
+  return <Script src="https://example.com/sdk.js" strategy="afterInteractive" />
 }
 ```
 
@@ -238,15 +221,15 @@ export function Card() {
 
 ## 文末速查
 
-| 场景 | 优先想到的能力 |
-| --- | --- |
-| 页面图片 | `next/image` |
-| 全站字体 | `next/font` |
-| 第三方脚本 | `next/script` |
-| 固定 URL 静态资源 | `public` |
-| 全站基线和 token | Global CSS |
-| 组件局部样式 | CSS Modules |
-| 原子化样式体系 | Tailwind 等团队方案 |
+| 场景              | 优先想到的能力      |
+| ----------------- | ------------------- |
+| 页面图片          | `next/image`        |
+| 全站字体          | `next/font`         |
+| 第三方脚本        | `next/script`       |
+| 固定 URL 静态资源 | `public`            |
+| 全站基线和 token  | Global CSS          |
+| 组件局部样式      | CSS Modules         |
+| 原子化样式体系    | Tailwind 等团队方案 |
 
 如果只保留一个结论，可以记住下面这句话：
 

@@ -1,5 +1,9 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { normalizeProviderApiMode, normalizeProviderModels, type ProviderType } from '@/lib/provider-config'
+import {
+  normalizeProviderApiMode,
+  normalizeProviderModels,
+  type ProviderType,
+} from '@/lib/provider-config'
 import { isAdminUser, getRequestUser } from '@/lib/server/admin-auth'
 import { NextResponse } from 'next/server'
 

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BookOpenIcon, MessageSquareIcon } from 'lucide-react'
+import { BookOpenIcon, LayoutGridIcon, MessageSquareIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -19,6 +19,11 @@ const ROUTES = [
     href: '/blog',
     label: '博客',
     icon: BookOpenIcon,
+  },
+  {
+    href: '/ui',
+    label: 'UI',
+    icon: LayoutGridIcon,
   },
 ] as const
 

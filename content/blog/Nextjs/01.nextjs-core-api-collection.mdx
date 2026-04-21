@@ -69,14 +69,7 @@ export default function PostCard() {
 import Image from 'next/image'
 
 export default function Hero() {
-  return (
-    <Image
-      src="/hero.png"
-      alt="Dashboard preview"
-      width={1280}
-      height={720}
-    />
-  )
+  return <Image src="/hero.png" alt="Dashboard preview" width={1280} height={720} />
 }
 ```
 
@@ -98,12 +91,7 @@ export default function Hero() {
 import Script from 'next/script'
 
 export default function Analytics() {
-  return (
-    <Script
-      src="https://example.com/analytics.js"
-      strategy="afterInteractive"
-    />
-  )
+  return <Script src="https://example.com/analytics.js" strategy="afterInteractive" />
 }
 ```
 
@@ -276,17 +264,17 @@ export default async function Page() {
 
 ## 文末速查
 
-| 场景 | 优先想到的 API |
-| --- | --- |
-| 站内导航 | `Link` |
-| 图片优化 | `Image` |
-| 第三方脚本加载 | `Script` |
-| 服务端流程跳转 | `redirect` |
-| 永久迁移旧 URL | `permanentRedirect` |
-| 资源级 404 | `notFound` |
-| 读取请求头 | `headers` |
-| 读取或写入 Cookie | `cookies` |
-| 内容预览模式 | `draftMode` |
+| 场景              | 优先想到的 API      |
+| ----------------- | ------------------- |
+| 站内导航          | `Link`              |
+| 图片优化          | `Image`             |
+| 第三方脚本加载    | `Script`            |
+| 服务端流程跳转    | `redirect`          |
+| 永久迁移旧 URL    | `permanentRedirect` |
+| 资源级 404        | `notFound`          |
+| 读取请求头        | `headers`           |
+| 读取或写入 Cookie | `cookies`           |
+| 内容预览模式      | `draftMode`         |
 
 如果只保留一个结论，可以记住下面这句话：
 
