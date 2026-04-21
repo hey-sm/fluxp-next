@@ -1,6 +1,7 @@
 import { HomeTopNav } from '@/components/home/home-top-nav'
 import { HomeWeatherStatus } from '@/components/home/home-weather-status'
 import { LightRays } from '@/components/ui/light-rays'
+import { LogoCarousel } from '@/components/ui/logo-carousel'
 import { PixelHeading } from '@/components/ui/pixel-heading-character'
 import { fetchWeatherFromIp } from '@/lib/weather'
 import SplitText from '@/components/ui/SplitText'
@@ -37,7 +38,11 @@ export default async function Home() {
           <HomeWeatherStatus className="mt-5" initialWeather={initialWeather} />
         </section>
 
-        <section className="mt-auto flex justify-center pt-16 pb-6 sm:pt-20">
+        <section className="flex flex-1 items-center justify-center py-14 sm:py-18">
+          <LogoCarousel className="w-full max-w-4xl" columnCount={3} />
+        </section>
+
+        <section className="flex justify-center pb-6 sm:pb-8">
           <SplitText
             text="悟已往之不谏，知来者之可追。实迷途其未远，觉今是而昨非。"
             delay={50}
