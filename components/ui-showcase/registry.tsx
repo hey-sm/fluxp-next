@@ -59,7 +59,9 @@ const uiShowcaseCategories = [
   },
 ] as const satisfies readonly UiShowcaseCategory[]
 
-const uiShowcaseItems = uiShowcaseCategories.flatMap((category) => category.items)
+const uiShowcaseItems: readonly UiShowcaseItem[] = (
+  uiShowcaseCategories as readonly UiShowcaseCategory[]
+).flatMap((category) => category.items)
 const uiShowcaseItemsBySlug = new Map(uiShowcaseItems.map((item) => [item.slug, item]))
 
 export function getUiShowcaseCategories(): readonly UiShowcaseCategory[] {

@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { MDXRemote } from 'next-mdx-remote/rsc'
-import prettyCode from 'rehype-pretty-code'
+import rehypeHighlight from 'rehype-highlight'
 import rehypeSlug from 'rehype-slug'
 import remarkGfm from 'remark-gfm'
 import { BlogContentLayout } from '@/components/blog/BlogContentLayout'
@@ -60,19 +60,7 @@ export default async function BlogPostPage({
               mdxOptions: {
                 format: doc.format,
                 remarkPlugins: [remarkGfm],
-                rehypePlugins: [
-                  rehypeSlug,
-                  [
-                    prettyCode,
-                    {
-                      theme: {
-                        light: 'github-light',
-                        dark: 'github-dark',
-                      },
-                      keepBackground: false,
-                    },
-                  ],
-                ],
+                rehypePlugins: [rehypeSlug, rehypeHighlight],
               },
             }}
           />
